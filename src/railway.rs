@@ -78,7 +78,7 @@ impl RailwayStation {
         let active_track_index = tracks.iter().position(|x| x.is_active).unwrap();
 
         let mut message_lines = commit.message().unwrap_or("").lines();
-        let first_line = message_lines.next().unwrap();
+        let first_line = message_lines.next().unwrap_or("");
 
         RailwayStation {
             tracks: tracks,
