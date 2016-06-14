@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/org/sunnyone/MetalGit">
+    <file preprocess="xml-stripblanks">commit_window.ui</file>
+    <file preprocess="xml-stripblanks">history_window.ui</file>
+  </gresource>
+</gresources>
