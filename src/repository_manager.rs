@@ -22,8 +22,4 @@ impl RepositoryManager {
         // TODO: check the path is set
         git2::Repository::open(self.work_dir_path.borrow().as_str())
     }
-
-    pub fn get_file_path(&self, path_in_repository: &Path) -> PathBuf {
-        Path::new(&*self.work_dir_path.borrow()).join(path_in_repository)
-    }
 }

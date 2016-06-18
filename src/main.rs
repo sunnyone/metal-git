@@ -20,6 +20,8 @@ mod station_wrapper;
 mod commit_window;
 mod history_window;
 mod window_manager;
+mod repository_ext;
+
 pub mod railway;
 use std::rc::Rc;
 

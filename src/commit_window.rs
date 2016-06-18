@@ -10,15 +10,16 @@ use std::str;
 use std::path::Path;
 use std::fs;
 use std::fs::File;
-use std::io;
 use std::io::Read;
 use std::collections::HashSet;
+use std::error;
 
 use git2::{Error, StatusOptions};
 use git2::build::CheckoutBuilder;
 
 use repository_manager::RepositoryManager;
 use gtk_utils;
+use repository_ext::RepositoryExt;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -281,8 +282,8 @@ impl CommitWindow {
         }
 
         for file_path in &remove_file_paths {
-            let path = self.repository_manager.get_file_path(file_path);
-
+            let path = repo.get_full_path(file_path).unwrap();
+            
             // TODO: convert error
             if let Err(error) = fs::remove_file(&path) {
                 println!("Failed to remove {}: {}", path.to_string_lossy(), error);
@@ -313,7 +314,7 @@ impl CommitWindow {
 
         for file in files {
             let file = Path::new(&file);
-            let path_repo = self.repository_manager.get_file_path(file);
+            let path_repo = repo.get_full_path(file).unwrap();
             if !fs::metadata(path_repo).is_ok() {
                 // check exists
                 try!(index.remove_path(&file));
@@ -552,8 +553,7 @@ impl CommitWindow {
     }
 
     fn show_new_file(&self, path_in_repository: &Path) {
-        let path = self.repository_manager.get_file_path(path_in_repository);
-        match self.read_contents(&path) {
+        match self.read_contents(&path_in_repository) {
             Ok(s) => {
                 self.set_diff_all_add_text(&s);
             }
@@ -565,7 +565,11 @@ impl CommitWindow {
         }
     }
 
-    fn read_contents(&self, path: &Path) -> Result<String, io::Error> {
+    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<error::Error>> {
+        let repo = try!(self.repository_manager.open());
+
+        let path = repo.get_full_path(path_in_repository).unwrap();
+        
         let mut s = String::new();
         let mut f = try!(File::open(path));
         try!(f.read_to_string(&mut s));
