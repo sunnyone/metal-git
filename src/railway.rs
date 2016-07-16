@@ -7,6 +7,8 @@ use std::cell::RefCell;
 use git2::{Error, Oid};
 use repository_manager::RepositoryManager;
 
+use chrono::*;
+
 #[derive(Clone, PartialEq)]
 pub struct RailwayTrack {
     pub line_number: LineNumber,
@@ -27,6 +29,7 @@ pub struct RailwayStation {
     pub author_name: String,
     pub author_email: String,
     pub message: String,
+    pub time: String,
     
     active_track_index: usize,
 }
@@ -86,6 +89,9 @@ impl RailwayStation {
 
         let author = commit.author();
         
+        let time = commit.time();
+        let commit_time = FixedOffset::east(time.offset_minutes() * 60).timestamp(time.seconds(), 0);
+        
         RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
@@ -94,7 +100,8 @@ impl RailwayStation {
             ref_names: ref_names,
             author_name: author.name().unwrap_or("").to_string(),
             author_email: author.email().unwrap_or("").to_string(),
-            message: commit.message().unwrap_or("").to_string()
+            message: commit.message().unwrap_or("").to_string(),
+            time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z"))
         }
     }
 

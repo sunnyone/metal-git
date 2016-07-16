@@ -2,6 +2,7 @@ extern crate gtk;
 extern crate git2;
 extern crate cairo;
 extern crate gdk;
+extern crate chrono;
 
 #[macro_use]
 extern crate glib;

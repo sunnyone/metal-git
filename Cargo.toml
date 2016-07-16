@@ -14,6 +14,7 @@ git2 = "0.3"
 libc = "0.2"
 #gio-sys = "^0"
 #glib-sys = "^0"
+chrono = "0.2"
 
 [dependencies.cairo-rs]
 git = "https://github.com/gtk-rs/cairo"

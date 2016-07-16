@@ -186,6 +186,7 @@ impl HistoryWindow {
         if let Some(station) = station_wrapper.map(|x| x.get_station()) {
             let mut text = String::new();
             text.push_str(&format!("Author: {} ({})\n", station.author_name, station.author_email));
+            text.push_str(&format!("Date: {}\n", station.time));
             text.push_str(&format!("Commit Hash: {}\n\n", station.oid));
             
             text.push_str(&station.message);
