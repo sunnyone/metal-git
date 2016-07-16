@@ -24,6 +24,10 @@ pub struct RailwayStation {
     pub subject: String,
     pub ref_names: Vec<String>,
 
+    pub author_name: String,
+    pub author_email: String,
+    pub message: String,
+    
     active_track_index: usize,
 }
 
@@ -80,12 +84,17 @@ impl RailwayStation {
         let mut message_lines = commit.message().unwrap_or("").lines();
         let first_line = message_lines.next().unwrap_or("");
 
+        let author = commit.author();
+        
         RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
             oid: commit.id(),
             subject: first_line.to_string(),
             ref_names: ref_names,
+            author_name: author.name().unwrap_or("").to_string(),
+            author_email: author.email().unwrap_or("").to_string(),
+            message: commit.message().unwrap_or("").to_string()
         }
     }
 

@@ -22,8 +22,9 @@ pub struct HistoryWindow {
     refresh_button: gtk::Button,
 
     history_treeview: gtk::TreeView,
+    commit_textview: gtk::TextView,
 
-    history_list_store: gtk::ListStore,
+    history_list_store: gtk::ListStore
 }
 
 const COLUMN_SUBJECT: u32 = 0;
@@ -44,6 +45,8 @@ impl HistoryWindow {
             refresh_button: builder.get_object("refresh_button").unwrap(),
             history_treeview: builder.get_object("history_treeview").unwrap(),
 
+            commit_textview: builder.get_object("commit_textview").unwrap(),
+            
             history_list_store: gtk::ListStore::new(&[String::static_type(),
                                                       object::Object::static_type()]),
         };
@@ -63,6 +66,12 @@ impl HistoryWindow {
             w.upgrade().unwrap().refresh_button_clicked();
         });
 
+        let w = Rc::downgrade(&history_window);
+        history_window.history_treeview.get_selection().connect_changed(move |selection| {
+            dialog_when_error!("Failed to get commit info: {:?}",
+                               w.upgrade().unwrap().history_tree_selected(&selection));
+        });
+        
         history_window
     }
 
@@ -156,6 +165,37 @@ impl HistoryWindow {
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
     }
 
+    fn get_selected_station_wrapper(&self, selection: &gtk::TreeSelection) -> Option<StationWrapper> {
+        let (tree_paths, model) = selection.get_selected_rows();
+        let station_wrapper = tree_paths.iter()
+                  .flat_map(|tree_path|
+                      self.history_list_store.get_iter(tree_path)
+                  ).map(|iter| {
+                      let value = self.history_list_store.get_value(&iter, COLUMN_STATION as i32);
+                      let obj = value.get::<object::Object>().unwrap();
+                      let station_wrapper = obj.downcast::<StationWrapper>().unwrap();
+                      station_wrapper }).next();
+                  
+        station_wrapper
+    }
+
+    fn history_tree_selected(&self, selection: &gtk::TreeSelection) -> Result<(), Error> {
+        let buffer = self.commit_textview.get_buffer().unwrap();
+
+        let station_wrapper = self.get_selected_station_wrapper(selection);
+        if let Some(station) = station_wrapper.map(|x| x.get_station()) {
+            let mut text = String::new();
+            text.push_str(&format!("Author: {} ({})\n", station.author_name, station.author_email));
+            text.push_str(&format!("Commit Hash: {}\n\n", station.oid));
+            
+            text.push_str(&station.message);
+            
+            buffer.set_text(&text);
+        }
+        
+        Ok(())    
+    }
+    
     fn commit_button_clicked(&self) {
         self.window_manager.upgrade().unwrap().show_commit_window();
     }
