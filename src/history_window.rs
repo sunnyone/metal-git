@@ -27,8 +27,10 @@ pub struct HistoryWindow {
     history_list_store: gtk::ListStore
 }
 
-const COLUMN_SUBJECT: u32 = 0;
-const COLUMN_STATION: u32 = 1;
+const COLUMN_STATION: u32 = 0;
+const COLUMN_SUBJECT: u32 = 1;
+const COLUMN_AUTHOR_NAME: u32 = 2;
+const COLUMN_TIME: u32 = 3;
 
 impl HistoryWindow {
     pub fn new(window_manager: Weak<WindowManager>,
@@ -47,8 +49,11 @@ impl HistoryWindow {
 
             commit_textview: builder.get_object("commit_textview").unwrap(),
             
-            history_list_store: gtk::ListStore::new(&[String::static_type(),
-                                                      object::Object::static_type()]),
+            history_list_store: gtk::ListStore::new(&[
+                object::Object::static_type(),
+                String::static_type(),
+                String::static_type(),
+                String::static_type()]),
         };
 
         Self::setup_history_tree(&history_window.history_treeview,
@@ -82,8 +87,22 @@ impl HistoryWindow {
         let col = gtk::TreeViewColumn::new();
         col.set_title("Subject");
         col.pack_start(&subject_renderer, false);
-        col.add_attribute(&subject_renderer, "markup", COLUMN_SUBJECT as i32);
         col.add_attribute(&subject_renderer, "station", COLUMN_STATION as i32);
+        col.add_attribute(&subject_renderer, "markup", COLUMN_SUBJECT as i32);
+        treeview.append_column(&col);
+        
+        let renderer = gtk::CellRendererText::new();
+        let col = gtk::TreeViewColumn::new();
+        col.set_title("Author");
+        col.pack_start(&renderer, false);
+        col.add_attribute(&renderer, "text", COLUMN_AUTHOR_NAME as i32);
+        treeview.append_column(&col);
+        
+        let renderer = gtk::CellRendererText::new();
+        let col = gtk::TreeViewColumn::new();
+        col.set_title("Time");
+        col.pack_start(&renderer, false);
+        col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
     }
 
@@ -132,14 +151,22 @@ impl HistoryWindow {
         let stations = try!(railway::collect_tree(&self.repository_manager));
         for station in stations {
             let subject = Self::create_subject_markup(&station);
-
+            let author_name = station.author_name.clone();
+            let time = station.time.clone();
+            
             let mut station_wrapper = StationWrapper::new();
             station_wrapper.set_station(station);
-
+            
             self.history_list_store
                 .insert_with_values(None,
-                                    &[COLUMN_SUBJECT, COLUMN_STATION],
-                                    &[&subject, &station_wrapper]);
+                                    &[COLUMN_STATION,
+                                      COLUMN_SUBJECT,
+                                      COLUMN_AUTHOR_NAME,
+                                      COLUMN_TIME],
+                                    &[&station_wrapper,
+                                      &subject,
+                                      &author_name,
+                                      &time]);
         }
 
         Ok(())
