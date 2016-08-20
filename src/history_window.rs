@@ -27,10 +27,10 @@ pub struct HistoryWindow {
     history_list_store: gtk::ListStore
 }
 
-const COLUMN_STATION: u32 = 0;
-const COLUMN_SUBJECT: u32 = 1;
-const COLUMN_AUTHOR_NAME: u32 = 2;
-const COLUMN_TIME: u32 = 3;
+const HISTORY_COLUMN_STATION: u32 = 0;
+const HISTORY_COLUMN_SUBJECT: u32 = 1;
+const HISTORY_COLUMN_AUTHOR_NAME: u32 = 2;
+const HISTORY_COLUMN_TIME: u32 = 3;
 
 impl HistoryWindow {
     pub fn new(window_manager: Weak<WindowManager>,
@@ -87,22 +87,22 @@ impl HistoryWindow {
         let col = gtk::TreeViewColumn::new();
         col.set_title("Subject");
         col.pack_start(&subject_renderer, false);
-        col.add_attribute(&subject_renderer, "station", COLUMN_STATION as i32);
-        col.add_attribute(&subject_renderer, "markup", COLUMN_SUBJECT as i32);
+        col.add_attribute(&subject_renderer, "station", HISTORY_COLUMN_STATION as i32);
+        col.add_attribute(&subject_renderer, "markup", HISTORY_COLUMN_SUBJECT as i32);
         treeview.append_column(&col);
         
         let renderer = gtk::CellRendererText::new();
         let col = gtk::TreeViewColumn::new();
         col.set_title("Author");
         col.pack_start(&renderer, false);
-        col.add_attribute(&renderer, "text", COLUMN_AUTHOR_NAME as i32);
+        col.add_attribute(&renderer, "text", HISTORY_COLUMN_AUTHOR_NAME as i32);
         treeview.append_column(&col);
         
         let renderer = gtk::CellRendererText::new();
         let col = gtk::TreeViewColumn::new();
         col.set_title("Time");
         col.pack_start(&renderer, false);
-        col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
+        col.add_attribute(&renderer, "text", HISTORY_COLUMN_TIME as i32);
         treeview.append_column(&col);
     }
 
@@ -159,10 +159,10 @@ impl HistoryWindow {
             
             self.history_list_store
                 .insert_with_values(None,
-                                    &[COLUMN_STATION,
-                                      COLUMN_SUBJECT,
-                                      COLUMN_AUTHOR_NAME,
-                                      COLUMN_TIME],
+                                    &[HISTORY_COLUMN_STATION,
+                                      HISTORY_COLUMN_SUBJECT,
+                                      HISTORY_COLUMN_AUTHOR_NAME,
+                                      HISTORY_COLUMN_TIME],
                                     &[&station_wrapper,
                                       &subject,
                                       &author_name,
@@ -198,7 +198,7 @@ impl HistoryWindow {
                   .flat_map(|tree_path|
                       self.history_list_store.get_iter(tree_path)
                   ).map(|iter| {
-                      let value = self.history_list_store.get_value(&iter, COLUMN_STATION as i32);
+                      let value = self.history_list_store.get_value(&iter, HISTORY_COLUMN_STATION as i32);
                       let obj = value.get::<object::Object>().unwrap();
                       let station_wrapper = obj.downcast::<StationWrapper>().unwrap();
                       station_wrapper }).next();
