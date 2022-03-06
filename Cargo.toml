@@ -10,11 +10,20 @@ path = "src/main.rs"
 
 [dependencies]
 rustc-serialize = "0.3.24" # https://github.com/coeuvre/rust-2048/issues/30
-git2 = "0.3"
+git2 = "^0.14"
 gtk = { version = "^0.15.1" }
+gdk = "*"
+glib = "*"
+cairo = "*"
+glib-sys = "*"
+gio-sys = "*"
+gobject-sys = "*"
+pango-sys = "*"
+cairo-sys = "*"
+gdk-sys = "*"
+gtk-sys = "*"
+
 #libc = "0.2"
-##gio-sys = "^0"
-##glib-sys = "^0"
 
 #
 #[dependencies.cairo-rs]
