@@ -15,7 +15,7 @@ Install build dependencies at first. This program requires gtk+3 and libgit2.
 In Ubuntu 14.04 / 16.04, run this:
 
 ```
-$ sudo apt install libgtk-3-dev libgit2-dev cmake
+$ sudo apt install libgtk-3-dev libgit2-dev cmake libssl-dev
 ```
 
 If build dependencies are properly installed, cargo should succeed.
