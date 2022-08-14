@@ -251,7 +251,7 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
 
     let mut revwalk = try!(repo.revwalk());
 
-    revwalk.set_sorting(git2::SORT_TIME);
+    revwalk.set_sorting(git2::Sort::TIME);
     try!(revwalk.push_head());
 
     let mut track_line_map = TrackLineMap::new();

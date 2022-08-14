@@ -5,6 +5,7 @@ extern crate gdk;
 
 #[macro_use]
 extern crate glib;
+extern crate gio_sys;
 
 mod gobject_utils;
 pub mod repository_manager;
