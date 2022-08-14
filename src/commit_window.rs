@@ -85,7 +85,7 @@ impl CommitWindow {
         };
 
         let commit_window = Rc::new(commit_window);
-        ::gtk_utils::modify_font_monospace(&commit_window.diff_text_view);
+        commit_window.diff_text_view.set_monospace(true);
 
         let w = Rc::downgrade(&commit_window);
         commit_window.window.connect_delete_event(move |_, _| {

@@ -6,6 +6,7 @@ extern crate pango_sys;
 
 use gtk::prelude::*;
 use std::ffi::{CString, CStr};
+use glib::translate::ToGlibPtr;
 
 #[macro_export]
 macro_rules! dialog_when_error {
@@ -35,15 +36,6 @@ pub fn message_box_info(message: &str) {
                                          message);
     dialog.run();
     dialog.destroy();
-}
-
-pub fn modify_font_monospace<T: IsA<gtk::Widget>>(widget: &T) {
-    let font_name = CString::new("Monospace").unwrap();
-    unsafe {
-        let font_desc = pango_sys::pango_font_description_from_string(font_name.as_ptr());
-        gtk_sys::gtk_widget_modify_font(widget.to_glib_none().0, font_desc);
-        pango_sys::pango_font_description_free(font_desc);
-    }
 }
 
 pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
