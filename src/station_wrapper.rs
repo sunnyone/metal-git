@@ -2,106 +2,49 @@ extern crate glib;
 extern crate gtk;
 extern crate cairo;
 
-extern crate gtk_sys;
-extern crate gdk_sys;
-extern crate gobject_sys;
-extern crate glib_sys;
-extern crate cairo_sys;
-
-use std::mem;
-use self::glib_sys::gpointer;
-use self::gobject_sys::GTypeInstance;
-use self::glib_sys::GType;
-use std::ptr;
-use std::os::raw::c_void;
-use gobject_utils::PrivateAccessor;
 use std::rc::Rc;
+use glib::Cast;
 
-use glib::object::Downcast;
+use glib::subclass::object::ObjectImpl;
+use glib::subclass::types::ObjectSubclass;
 use glib::translate::*;
 
 use railway::RailwayStation;
 
-#[repr(C)]
-pub struct StationWrapperC(c_void);
-
-#[repr(C)]
-pub struct StationWrapperClass {
-    pub parent_class: gobject_sys::GObjectClass,
-}
-
-pub struct StationWrapperPrivate {
+#[derive(Default)]
+pub struct StationWrapper {
     pub station: Option<Rc<RailwayStation>>,
 }
 
-// finalize: Option<unsafe extern "C" fn(*mut GObject)>,
-unsafe extern "C" fn finalize(instance: *mut gobject_sys::GObject) {
-    let mut accessor = get_private_accessor(instance);
-    let _ = accessor.get(); // drop
+#[glib::object_subclass]
+impl ObjectSubclass for StationWrapper {
+    const NAME: &'static str = "StationWrapper";
+    type Type = super::StationWrapper;
+    type ParentType = glib::Object;
 }
 
-// pub type GClassInitFunc = Option<unsafe extern "C" fn(gpointer, gpointer)>;
-unsafe extern "C" fn class_init(g_class: gpointer, _class_data: gpointer) {
-    // i32 is dummy
-    gobject_sys::g_type_class_add_private(g_class, mem::size_of::<Box<i32>>());
-
-    let klass = g_class as *mut gobject_sys::GInitiallyUnownedClass;
-    (*klass).finalize = Some(finalize);
+// Trait shared by all GObjects
+impl ObjectImpl for StationWrapper {
 }
 
-// pub type GInstanceInitFunc = Option<unsafe extern "C" fn(*mut GTypeInstance, gpointer)>;
-unsafe extern "C" fn init(instance: *mut GTypeInstance, _g_class: gpointer) {
-    let priv_ = Box::new(StationWrapperPrivate { station: None });
-
-    let mut accessor = PrivateAccessor::<StationWrapperPrivate>::from_instance(instance,
-                                                                               get_type());
-    accessor.set(priv_);
-}
-
-fn get_private_accessor(obj: *mut gobject_sys::GObject) -> PrivateAccessor<StationWrapperPrivate> {
-    unsafe { PrivateAccessor::<StationWrapperPrivate>::from_object(obj, get_type()) }
-}
-
-static mut TYPE: GType = 0;
-pub fn get_type() -> glib_sys::GType {
-    unsafe {
-        if TYPE == 0 {
-            let gtype = ::gobject_utils::register_static_type::<StationWrapperClass>(
-                    "StationWrapper", gobject_sys::g_object_get_type(),
-                    Some(class_init), Some(init));
-            TYPE = gtype;
-        }
-        TYPE
-    }
-}
-
-glib_wrapper! {
-     pub struct StationWrapper(Object<StationWrapperC>);
-     
-     match fn {
-         get_type => || get_type(),
-     }
+glib::wrapper! {
+    pub struct SimpleObject(ObjectSubclass<SimpleObject>);
 }
 
 impl StationWrapper {
-    pub fn new() -> StationWrapper {
-        unsafe {
-            let ptr = gobject_sys::g_object_new(get_type(), ptr::null());
-            StationWrapper::from_glib_full(ptr as *mut _).downcast_unchecked()
-        }
+    pub fn new() -> Self {
+        glib::Object::new(
+            Self::static_type())
+            .expect("Failed to create StationWrapper")
+            .downcast()
+            .expect("Wrong type")
     }
 
     pub fn get_station(&self) -> Rc<RailwayStation> {
-        unsafe {
-            let accessor = get_private_accessor(self.to_glib_none().0);
-            accessor.borrow().station.as_ref().unwrap().clone()
-        }
+        self.station.as_ref().unwrap().clone()
     }
 
     pub fn set_station(&mut self, station: RailwayStation) {
-        let mut accessor = get_private_accessor(self.to_glib_none().0);
-        unsafe {
-            accessor.borrow_mut().station = Some(Rc::new(station));
-        }
+        self.station = Some(Rc::new(station));
     }
 }
