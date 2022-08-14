@@ -165,10 +165,10 @@ impl CommitWindow {
 
         let w = Rc::downgrade(&commit_window);
         commit_window.message_text_view.connect_key_press_event(move |_, key| {
-            if key.get_state().intersects(gdk::CONTROL_MASK) {
-                let keyval = key.get_keyval();
+            if key.get_state().intersects(gdk::ModifierType::CONTROL_MASK) {
+                // TODO: works?
                 // TODO: "KP_Enter" is nessessary?
-                if gdk::keyval_name(keyval).map(|n| n == "Return").unwrap_or(false) {
+                if key.name.map(|n| n == "Return").unwrap_or(false) {
                     dialog_when_error!("Failed to commit: {:?}",
                                        w.upgrade().unwrap().commit_or_amend());
                     return Inhibit(true);
@@ -233,7 +233,7 @@ impl CommitWindow {
         }
     }
 
-    fn get_file_from_tree_path<T: gtk::TreeModelExt>(list_store: &T,
+    fn get_file_from_tree_path<T: gtk::traits::TreeModelExt>(list_store: &T,
                                                      tree_path: &gtk::TreePath)
                                                      -> Option<String> {
         list_store.get_iter(tree_path)
