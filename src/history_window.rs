@@ -141,12 +141,12 @@ impl HistoryWindow {
 
         for ref_name in &station.ref_names {
             let tag = format!("<span foreground=\"#a00000\"><b>[{}]</b></span>",
-                              &gtk_utils::escape_markup_text(&ref_name));
+                glib::markup_escape_text(&ref_name));
             markup.push_str(&tag);
         }
 
         markup.push(' ');
-        markup.push_str(&gtk_utils::escape_markup_text(&station.subject));
+        markup.push_str(&glib::markup_escape_text(&station.subject));
 
         markup
     }

@@ -2,8 +2,6 @@ extern crate gtk;
 extern crate glib;
 
 use gtk::prelude::*;
-use std::ffi::{CString, CStr};
-use glib::translate::ToGlibPtr;
 
 #[macro_export]
 macro_rules! dialog_when_error {
@@ -38,20 +36,9 @@ pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
                                            text: &str,
                                            tag_name: &str) {
 
-    let start_offset = iter.get_offset();
+    let start_offset = iter.offset();
     buffer.insert(iter, text);
-    let start_iter = buffer.get_iter_at_offset(start_offset);
+    let start_iter = buffer.iter_at_offset(start_offset);
 
     buffer.apply_tag_by_name(tag_name, &start_iter, &iter);
-}
-
-// TODO: create glib_utils?
-pub fn escape_markup_text(str: &str) -> String {
-    let cstr = CString::new(str).unwrap();
-    unsafe {
-        let text_ptr = glib_sys::g_markup_escape_text(cstr.as_ptr(), -1);
-        let escaped = CStr::from_ptr(text_ptr).to_str().unwrap().to_owned();
-        glib_sys::g_free(text_ptr as *mut _);
-        escaped
-    }
 }
