@@ -1,8 +1,5 @@
 extern crate gtk;
-extern crate gtk_sys;
 extern crate glib;
-extern crate glib_sys;
-extern crate pango_sys;
 
 use gtk::prelude::*;
 use std::ffi::{CString, CStr};
@@ -25,7 +22,6 @@ pub fn message_box_error(message: &str) {
                                          gtk::ButtonsType::Ok,
                                          message);
     dialog.run();
-    dialog.destroy();
 }
 
 pub fn message_box_info(message: &str) {
@@ -35,7 +31,6 @@ pub fn message_box_info(message: &str) {
                                          gtk::ButtonsType::Ok,
                                          message);
     dialog.run();
-    dialog.destroy();
 }
 
 pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
