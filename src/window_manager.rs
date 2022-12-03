@@ -1,5 +1,3 @@
-extern crate gtk;
-
 use std::rc::Rc;
 use std::cell::RefCell;
 use history_window::HistoryWindow;

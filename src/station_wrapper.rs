@@ -1,50 +1,53 @@
-extern crate glib;
-extern crate gtk;
-extern crate cairo;
-
+use std::cell::Ref;
 use std::rc::Rc;
-use glib::Cast;
 
-use glib::subclass::object::ObjectImpl;
-use glib::subclass::types::ObjectSubclass;
-use glib::translate::*;
+use gtk::glib::prelude::*;
+use gtk::glib::subclass::prelude::*;
 
 use railway::RailwayStation;
 
-#[derive(Default)]
-pub struct StationWrapper {
-    pub station: Option<Rc<RailwayStation>>,
+mod imp {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    pub struct StationWrapperImpl {
+        pub station: RefCell<Option<RailwayStation>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for StationWrapperImpl {
+        const NAME: &'static str = "StationWrapper";
+        type Type = super::StationWrapper;
+        type ParentType = gtk::glib::Object;
+        type Interfaces = ();
+    }
+
+    // Trait shared by all GObjects
+    impl ObjectImpl for StationWrapperImpl {}
 }
 
-#[glib::object_subclass]
-impl ObjectSubclass for StationWrapper {
-    const NAME: &'static str = "StationWrapper";
-    type Type = super::StationWrapper;
-    type ParentType = glib::Object;
-}
-
-// Trait shared by all GObjects
-impl ObjectImpl for StationWrapper {
-}
-
-glib::wrapper! {
-    pub struct SimpleObject(ObjectSubclass<SimpleObject>);
+gtk::glib::wrapper! {
+    pub struct StationWrapper(ObjectSubclass<imp::StationWrapperImpl>);
 }
 
 impl StationWrapper {
     pub fn new() -> Self {
-        glib::Object::new(
-            Self::static_type())
-            .expect("Failed to create StationWrapper")
-            .downcast()
-            .expect("Wrong type")
+        let obj: Self = gtk::glib::Object::new(&[]);
+        obj
     }
 
-    pub fn get_station(&self) -> Rc<RailwayStation> {
-        self.station.as_ref().unwrap().clone()
+    pub fn get_impl(&self) -> &imp::StationWrapperImpl {
+        imp::StationWrapperImpl::from_instance(self)
+    }
+
+    pub fn get_station(&self) -> Ref<Option<RailwayStation>> {
+        let priv_ = imp::StationWrapperImpl::from_instance(self);
+        priv_.station.borrow()
     }
 
     pub fn set_station(&mut self, station: RailwayStation) {
-        self.station = Some(Rc::new(station));
+        let priv_ = imp::StationWrapperImpl::from_instance(self);
+        priv_.station.replace(Some(station));
     }
 }

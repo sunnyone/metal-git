@@ -1,5 +1,4 @@
 extern crate gtk;
-extern crate glib;
 
 use gtk::prelude::*;
 
