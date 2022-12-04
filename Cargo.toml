@@ -15,7 +15,6 @@ gtk = { version = "^0.16" }
 glib = { version = "^0.16" }
 #gdk = "*"
 #glib = "*"
-#cairo = "*"
 #gio = "*"
 #glib-sys = "*"
 #gio-sys = "*"
