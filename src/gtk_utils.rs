@@ -5,7 +5,7 @@ macro_rules! dialog_when_error {
 	($message_template:expr, $e:expr) => (
 		if let Err(err) = $e {
 			let msg = format!($message_template, err);
-			::gtk_utils::message_box_error(&msg)
+			crate::gtk_utils::message_box_error(&msg)
 		}
 	)
 }

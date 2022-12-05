@@ -1,8 +1,8 @@
 use std::rc::Rc;
 use std::cell::RefCell;
-use history_window::HistoryWindow;
-use commit_window::CommitWindow;
-use repository_manager::RepositoryManager;
+use crate::history_window::HistoryWindow;
+use crate::commit_window::CommitWindow;
+use crate::repository_manager::RepositoryManager;
 
 pub struct WindowManager {
     windows: RefCell<Option<Windows>>,

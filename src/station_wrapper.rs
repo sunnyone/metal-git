@@ -2,7 +2,7 @@ use std::cell::Ref;
 
 use gtk::glib::subclass::prelude::*;
 
-use railway::RailwayStation;
+use crate::railway::RailwayStation;
 
 mod imp {
     use super::*;

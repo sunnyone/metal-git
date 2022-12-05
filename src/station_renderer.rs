@@ -1,5 +1,5 @@
 use std::f64::consts;
-use railway;
+use crate::railway;
 use gtk::cairo::LineCap;
 
 fn commit_dot_box_size(cell_height: i32) -> (i32, i32) {

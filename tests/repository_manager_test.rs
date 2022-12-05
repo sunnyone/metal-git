@@ -6,7 +6,7 @@ extern crate metal_git;
 mod util;
 
 use metal_git::repository_manager;
-use util::test_repo::TestRepo;
+use crate::util::test_repo::TestRepo;
 
 #[test]
 pub fn open() {

@@ -13,9 +13,9 @@ use std::error;
 use git2::{Error, StatusOptions};
 use git2::build::CheckoutBuilder;
 
-use repository_manager::RepositoryManager;
-use gtk_utils;
-use repository_ext::RepositoryExt;
+use crate::repository_manager::RepositoryManager;
+use crate::gtk_utils;
+use crate::repository_ext::RepositoryExt;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -255,7 +255,7 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut builder = CheckoutBuilder::new();
         let mut to_checkout = false;
@@ -264,7 +264,7 @@ impl CommitWindow {
         let mut remove_file_paths = Vec::new();
         for file in &files {
             let file_path = Path::new(file);
-            let status = try!(repo.status_file(file_path));
+            let status = repo.status_file(file_path)?;
             if status == git2::Status::WT_NEW {
                 remove_file_paths.push(file_path);
             } else {
@@ -274,7 +274,7 @@ impl CommitWindow {
         }
 
         if to_checkout {
-            try!(repo.checkout_head(Some(&mut builder)));
+            repo.checkout_head(Some(&mut builder))?;
         }
 
         for file_path in &remove_file_paths {
@@ -295,7 +295,7 @@ impl CommitWindow {
         let selection = self.work_tree_files_tree_view.selection();
         let files = Self::get_selection_selected_files(&selection);
 
-        try!(self.stage_files(files));
+        self.stage_files(files)?;
 
         Ok(())
     }
@@ -305,21 +305,20 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
-        let mut index = try!(repo.index());
+        let repo = self.repository_manager.open()?;
+        let mut index = repo.index()?;
 
         for file in files {
             let file = Path::new(&file);
             let path_repo = repo.get_full_path(file).unwrap();
             if !fs::metadata(path_repo).is_ok() {
-                // check exists
-                try!(index.remove_path(&file));
+                index.remove_path(&file)?;
             } else {
-                try!(index.add_path(&file));
+                index.add_path(&file)?;
             }
         }
 
-        try!(index.write());
+        index.write()?;
 
         // TODO: partial update
         self.refresh();
@@ -331,7 +330,7 @@ impl CommitWindow {
         let selection = self.staged_files_tree_view.selection();
         let files = Self::get_selection_selected_files(&selection);
 
-        try!(self.unstage_files(files));
+        self.unstage_files(files)?;
 
         Ok(())
     }
@@ -341,12 +340,12 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
 
-        try!(repo.reset_default(Some(&head_object), files));
+        repo.reset_default(Some(&head_object), files)?;
 
         // TODO: partial update
         self.refresh();
@@ -361,10 +360,10 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
         let head_commit = head_object.as_commit().unwrap();
         let last_commit_message = head_commit.message();
 
@@ -389,34 +388,34 @@ impl CommitWindow {
     fn commit(&self, to_amend: bool) -> Result<(), Error> {
         let message = self.get_commit_message();
 
-        let repo = try!(self.repository_manager.open());
-        let signature = try!(repo.signature());
+        let repo = self.repository_manager.open()?;
+        let signature = repo.signature()?;
 
         // TODO: initial repository does not have a commit
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
         let head_commit = head_object.as_commit().unwrap();
 
-        let mut index = try!(repo.index());
-        let tree_oid = try!(index.write_tree());
+        let mut index = repo.index()?;
+        let tree_oid = index.write_tree()?;
         // TODO: use find_tree
-        let tree_object = try!(repo.find_object(tree_oid, Some(git2::ObjectType::Tree)));
+        let tree_object = repo.find_object(tree_oid, Some(git2::ObjectType::Tree))?;
         let tree = tree_object.as_tree().unwrap();
 
         if !to_amend {
-            try!(repo.commit(Some("HEAD"),
-                             &signature,
-                             &signature,
-                             &message,
-                             &tree,
-                             &[head_commit]));
+            repo.commit(Some("HEAD"),
+                        &signature,
+                        &signature,
+                        &message,
+                        &tree,
+                        &[head_commit])?;
         } else {
-            try!(head_commit.amend(Some("HEAD"),
-                                   Some(&signature),
-                                   Some(&signature),
-                                   None,
-                                   Some(&message),
-                                   Some(&tree)));
+            head_commit.amend(Some("HEAD"),
+                              Some(&signature),
+                              Some(&signature),
+                              None,
+                              Some(&message),
+                              Some(&tree))?;
         }
 
         // self.hide();
@@ -458,7 +457,7 @@ impl CommitWindow {
         self.staged_files_list_store.clear();
 
         match collect_changed_status_items(&self.repository_manager) {
-            Err(_) => ::gtk_utils::message_box_error("Error!"),
+            Err(_) => crate::gtk_utils::message_box_error("Error!"),
             Ok(list) => {
                 for item in list {
                     let list_store = match item.tree_type {
@@ -480,17 +479,17 @@ impl CommitWindow {
     }
 
     pub fn work_tree_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let path = Path::new(filename);
-        let status = try!(repo.status_file(path));
+        let status = repo.status_file(path)?;
         if status == git2::Status::WT_NEW {
             self.show_new_file(path);
             Ok(())
         } else {
             let mut diff_opts = git2::DiffOptions::new();
             diff_opts.pathspec(filename);
-            let diff = try!(repo.diff_index_to_workdir(None, Some(&mut diff_opts)));
+            let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
 
             self.show_diff(&diff);
 
@@ -499,16 +498,16 @@ impl CommitWindow {
     }
 
     pub fn index_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(filename);
 
-        let head_ref = try!(repo.head());
-        let head_tree_object = try!(head_ref.peel(git2::ObjectType::Tree));
+        let head_ref = repo.head()?;
+        let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
         let head_tree = head_tree_object.as_tree().unwrap();
 
-        let diff = try!(repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)));
+        let diff = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts))?;
 
         self.show_diff(&diff);
 
@@ -561,13 +560,13 @@ impl CommitWindow {
     }
 
     fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let path = repo.get_full_path(path_in_repository).unwrap();
         
         let mut s = String::new();
-        let mut f = try!(File::open(path));
-        try!(f.read_to_string(&mut s));
+        let mut f = File::open(path)?;
+        f.read_to_string(&mut s)?;
         Ok(s)
     }
 
@@ -585,7 +584,7 @@ struct StatusItem {
 
 fn collect_changed_status_items(repository_manager: &RepositoryManager)
                                 -> Result<Vec<StatusItem>, Error> {
-    let repo = try!(repository_manager.open());
+    let repo = repository_manager.open()?;
     if repo.is_bare() {
         return Err(Error::from_str("cannot report status on bare repository"));
     }
@@ -593,7 +592,7 @@ fn collect_changed_status_items(repository_manager: &RepositoryManager)
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
 
-    let statuses = try!(repo.statuses(Some(&mut opts)));
+    let statuses = repo.statuses(Some(&mut opts))?;
     let mut status_items: Vec<StatusItem> = Vec::new();
 
     for status in statuses.iter() {

@@ -1,9 +1,9 @@
 use std::rc::{Rc, Weak};
-use window_manager::WindowManager;
-use repository_manager::RepositoryManager;
+use crate::window_manager::WindowManager;
+use crate::repository_manager::RepositoryManager;
 use git2::Error;
-use railway;
-use station_wrapper::StationWrapper;
+use crate::railway;
+use crate::station_wrapper::StationWrapper;
 
 use gtk::Inhibit;
 use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
@@ -93,7 +93,7 @@ impl HistoryWindow {
     }
 
     fn load_title(&self) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut title = String::new();
         if let Ok(reference) = repo.head() {
@@ -120,7 +120,7 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         self.history_list_store.clear();
 
-        let stations = try!(railway::collect_tree(&self.repository_manager));
+        let stations = railway::collect_tree(&self.repository_manager)?;
         for station in stations {
             let subject = Self::create_subject_markup(&station);
 

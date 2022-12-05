@@ -3,6 +3,7 @@ name = "metal-git"
 version = "0.0.1"
 authors = ["Yoichi Imai <sunnyone41@gmail.com>"]
 build = "build.rs"
+edition = "2021"
 
 [lib]
 name = "metal_git"

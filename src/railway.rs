@@ -3,7 +3,7 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cell::RefCell;
 
 use git2::{Error, Oid};
-use repository_manager::RepositoryManager;
+use crate::repository_manager::RepositoryManager;
 
 #[derive(Clone, PartialEq)]
 pub struct RailwayTrack {
@@ -215,7 +215,7 @@ struct RefTable {
 impl RefTable {
     fn collect(repo: &git2::Repository) -> Result<RefTable, Error> {
         let mut table = HashMap::<Oid, Vec<String>>::new();
-        let refs = try!(repo.references());
+        let refs = repo.references()?;
         for r in refs {
             let r = r?;
             if let Some(oid) = r.target() {
@@ -244,14 +244,14 @@ impl RefTable {
 }
 
 pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<RailwayStation>, Error> {
-    let repo = try!(repository_manager.open());
+    let repo = repository_manager.open()?;
 
-    let ref_table = try!(RefTable::collect(&repo));
+    let ref_table = RefTable::collect(&repo)?;
 
-    let mut revwalk = try!(repo.revwalk());
+    let mut revwalk = repo.revwalk()?;
 
-    revwalk.set_sorting(git2::Sort::TIME);
-    try!(revwalk.push_head());
+    revwalk.set_sorting(git2::Sort::TIME)?;
+    revwalk.push_head()?;
 
     let mut track_line_map = TrackLineMap::new();
 
