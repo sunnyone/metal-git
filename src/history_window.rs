@@ -4,9 +4,7 @@ use repository_manager::RepositoryManager;
 use git2::Error;
 use railway;
 use station_wrapper::StationWrapper;
-use gtk_utils;
 
-use gtk::ffi::GtkCellRendererText;
 use gtk::Inhibit;
 use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
 use gtk::traits::{ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt};

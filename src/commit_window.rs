@@ -40,7 +40,7 @@ pub struct CommitWindow {
 
     repository_manager: Rc<RepositoryManager>,
 
-    commited: RefCell<Box<Fn() -> ()>>,
+    commited: RefCell<Box<dyn Fn() -> ()>>,
 }
 
 const FILENAME_COLUMN: u32 = 0;
@@ -554,14 +554,13 @@ impl CommitWindow {
                 self.set_diff_all_add_text(&s);
             }
             Err(err) => {
-                use std::error::Error;
                 let msg = format!("This file is not browsable: {}", err.to_string());
                 self.set_diff_all_add_text(&msg);
             }
         }
     }
 
-    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<error::Error>> {
+    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {
         let repo = try!(self.repository_manager.open());
 
         let path = repo.get_full_path(path_in_repository).unwrap();

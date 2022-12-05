@@ -1,7 +1,6 @@
 use std::rc::Rc;
 use git2::{Repository, Error};
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
 
 pub struct RepositoryManager {
     work_dir_path: RefCell<String>,

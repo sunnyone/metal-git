@@ -1,6 +1,5 @@
 use std::cell::Ref;
 
-use gtk::glib::prelude::*;
 use gtk::glib::subclass::prelude::*;
 
 use railway::RailwayStation;
