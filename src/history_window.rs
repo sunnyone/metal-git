@@ -1,5 +1,4 @@
 use std::rc::{Rc, Weak};
-use gtk::prelude::*;
 use window_manager::WindowManager;
 use repository_manager::RepositoryManager;
 use git2::Error;
@@ -7,7 +6,10 @@ use railway;
 use station_wrapper::StationWrapper;
 use gtk_utils;
 
-use glib::object;
+use gtk::ffi::GtkCellRendererText;
+use gtk::Inhibit;
+use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
+use gtk::traits::{ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt};
 
 pub struct HistoryWindow {
     window: gtk::Window,
@@ -30,19 +32,20 @@ impl HistoryWindow {
     pub fn new(window_manager: Weak<WindowManager>,
                repository_manager: Rc<RepositoryManager>)
                -> Rc<HistoryWindow> {
-        let builder = gtk::Builder::new_from_resource("/org/sunnyone/MetalGit/history_window.ui");
+        let builder = gtk::Builder::from_resource("/org/sunnyone/MetalGit/history_window.ui");
+
+        let col_types = [gtk::glib::types::Type::STRING, gtk::glib::types::Type::OBJECT];
 
         let history_window = HistoryWindow {
             window_manager: window_manager,
             repository_manager: repository_manager,
 
-            window: builder.get_object("history_window").unwrap(),
-            commit_button: builder.get_object("commit_button").unwrap(),
-            refresh_button: builder.get_object("refresh_button").unwrap(),
-            history_treeview: builder.get_object("history_treeview").unwrap(),
+            window: builder.object("history_window").unwrap(),
+            commit_button: builder.object("commit_button").unwrap(),
+            refresh_button: builder.object("refresh_button").unwrap(),
+            history_treeview: builder.object("history_treeview").unwrap(),
 
-            history_list_store: gtk::ListStore::new(&[String::static_type(),
-                                                      object::Object::static_type()]),
+            history_list_store: gtk::ListStore::new(&col_types),
         };
 
         Self::setup_history_tree(&history_window.history_treeview,
@@ -69,7 +72,6 @@ impl HistoryWindow {
         // TODO: Use StationCellRenderer
         // let subject_renderer = ::station_cell_renderer::StationCellRenderer::new();
         let subject_renderer = gtk::CellRendererText::new();
-
         let col = gtk::TreeViewColumn::new();
         col.set_title("Subject");
         col.pack_start(&subject_renderer, false);
@@ -129,8 +131,8 @@ impl HistoryWindow {
 
             self.history_list_store
                 .insert_with_values(None,
-                                    &[COLUMN_SUBJECT, COLUMN_STATION],
-                                    &[&subject, &station_wrapper]);
+                                    &[(COLUMN_SUBJECT, &subject),
+                                        (COLUMN_STATION, &station_wrapper)]);
         }
 
         Ok(())
@@ -141,12 +143,12 @@ impl HistoryWindow {
 
         for ref_name in &station.ref_names {
             let tag = format!("<span foreground=\"#a00000\"><b>[{}]</b></span>",
-                              &gtk_utils::escape_markup_text(&ref_name));
+                gtk::glib::markup_escape_text(&ref_name));
             markup.push_str(&tag);
         }
 
         markup.push(' ');
-        markup.push_str(&gtk_utils::escape_markup_text(&station.subject));
+        markup.push_str(&gtk::glib::markup_escape_text(&station.subject));
 
         markup
     }
