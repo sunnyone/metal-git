@@ -1,9 +1,3 @@
-extern crate gtk;
-extern crate gtk_sys;
-extern crate glib;
-extern crate glib_sys;
-extern crate pango_sys;
-
 use gtk::prelude::*;
 use std::ffi::{CString, CStr};
 

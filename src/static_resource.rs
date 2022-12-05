@@ -1,7 +1,3 @@
-extern crate gio_sys;
-extern crate glib_sys;
-extern crate libc;
-
 use std;
 
 pub fn init() {

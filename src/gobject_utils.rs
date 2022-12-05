@@ -1,7 +1,3 @@
-extern crate glib;
-extern crate glib_sys;
-extern crate gobject_sys;
-
 use std::mem;
 use self::gobject_sys::{GTypeInstance, GTypeQuery, GClassInitFunc, GInstanceInitFunc, GObject};
 use self::glib_sys::GType;

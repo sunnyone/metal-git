@@ -1,9 +1,5 @@
 extern crate gtk;
 extern crate git2;
-extern crate cairo;
-extern crate gdk;
-
-#[macro_use]
 extern crate glib;
 
 mod gobject_utils;

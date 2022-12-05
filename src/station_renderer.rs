@@ -1,5 +1,3 @@
-extern crate gtk;
-extern crate cairo;
 use std::f64::consts;
 use railway;
 use cairo::LineCap;

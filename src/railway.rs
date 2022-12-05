@@ -1,5 +1,3 @@
-extern crate git2;
-
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cell::RefCell;

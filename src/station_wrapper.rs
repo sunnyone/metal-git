@@ -1,13 +1,3 @@
-extern crate glib;
-extern crate gtk;
-extern crate cairo;
-
-extern crate gtk_sys;
-extern crate gdk_sys;
-extern crate gobject_sys;
-extern crate glib_sys;
-extern crate cairo_sys;
-
 use std::mem;
 use self::glib_sys::gpointer;
 use self::gobject_sys::GTypeInstance;

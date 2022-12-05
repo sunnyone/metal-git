@@ -1,6 +1,3 @@
-extern crate gtk;
-extern crate git2;
-
 use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use window_manager::WindowManager;

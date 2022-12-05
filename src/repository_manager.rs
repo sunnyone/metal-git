@@ -1,5 +1,3 @@
-extern crate git2;
-
 use std::rc::Rc;
 use git2::{Repository, Error};
 use std::cell::RefCell;
