@@ -66,12 +66,15 @@ impl HistoryWindow {
     fn setup_history_tree(treeview: &gtk::TreeView, store: &gtk::ListStore) {
         treeview.set_model(Some(store));
 
-        let subject_renderer = ::station_cell_renderer::StationCellRenderer::new();
+        // TODO: Use StationCellRenderer
+        // let subject_renderer = ::station_cell_renderer::StationCellRenderer::new();
+        let subject_renderer = gtk::CellRendererText::new();
+
         let col = gtk::TreeViewColumn::new();
         col.set_title("Subject");
         col.pack_start(&subject_renderer, false);
         col.add_attribute(&subject_renderer, "markup", COLUMN_SUBJECT as i32);
-        col.add_attribute(&subject_renderer, "station", COLUMN_STATION as i32);
+        // col.add_attribute(&subject_renderer, "station", COLUMN_STATION as i32);
         treeview.append_column(&col);
     }
 
