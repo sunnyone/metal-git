@@ -1,4 +1,5 @@
 extern crate gtk;
+extern crate glib;
 extern crate git2;
 
 mod gobject_utils;

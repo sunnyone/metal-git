@@ -1,6 +1,3 @@
-extern crate git2;
-extern crate gtk;
-
 use gtk::prelude::*;
 
 use std::rc::Rc;
