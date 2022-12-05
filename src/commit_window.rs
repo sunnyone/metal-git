@@ -265,7 +265,7 @@ impl CommitWindow {
         for file in &files {
             let file_path = Path::new(file);
             let status = try!(repo.status_file(file_path));
-            if status == git2::STATUS_WT_NEW {
+            if status == git2::Status::WT_NEW {
                 remove_file_paths.push(file_path);
             } else {
                 to_checkout = true;
@@ -484,7 +484,7 @@ impl CommitWindow {
 
         let path = Path::new(filename);
         let status = try!(repo.status_file(path));
-        if status == git2::STATUS_WT_NEW {
+        if status == git2::Status::WT_NEW {
             self.show_new_file(path);
             Ok(())
         } else {

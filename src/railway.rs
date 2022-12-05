@@ -217,6 +217,7 @@ impl RefTable {
         let mut table = HashMap::<Oid, Vec<String>>::new();
         let refs = try!(repo.references());
         for r in refs {
+            let r = r?;
             if let Some(oid) = r.target() {
                 if let Some(shorthand) = r.shorthand() {
                     match table.entry(oid) {
@@ -249,13 +250,14 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
 
     let mut revwalk = try!(repo.revwalk());
 
-    revwalk.set_sorting(git2::SORT_TIME);
+    revwalk.set_sorting(git2::Sort::TIME);
     try!(revwalk.push_head());
 
     let mut track_line_map = TrackLineMap::new();
 
     let mut stations = Vec::<RailwayStation>::new();
     for oid in revwalk {
+        let oid = oid?;
         let mut prev_to_map = HashMap::new();
         if let Some(last_station) = stations.last() {
             track_line_map.vacuum_unused_track_numbers(last_station.tracks
@@ -277,7 +279,7 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
         }
 
 
-        let commit = try!(repo.find_commit(oid));
+        let commit = repo.find_commit(oid)?;
         let active_line_number = track_line_map.take_line_number_or_aquire(&oid);
 
         let mut is_first_non_merge = true;
