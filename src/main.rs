@@ -2,7 +2,6 @@ extern crate gtk;
 extern crate git2;
 extern crate glib;
 
-mod gobject_utils;
 pub mod repository_manager;
 
 mod static_resource;
