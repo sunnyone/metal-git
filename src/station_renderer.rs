@@ -1,6 +1,6 @@
 use std::f64::consts;
 use crate::railway;
-use gtk::cairo::LineCap;
+use gtk::cairo::{Error, LineCap};
 
 fn commit_dot_box_size(cell_height: i32) -> (i32, i32) {
     (cell_height, cell_height)
@@ -27,7 +27,7 @@ pub fn render(station: &railway::RailwayStation,
               context: &gtk::cairo::Context,
               bg_area: &gtk::Rectangle,
               cell_area: &gtk::Rectangle)
-              -> (gtk::Rectangle, gtk::Rectangle) {
+              -> Result<(gtk::Rectangle, gtk::Rectangle), Error> {
 
     let (box_width, box_height) = commit_dot_box_size(cell_area.height());
     let dot_radius = commit_dot_radius(box_width, box_height);
@@ -51,14 +51,14 @@ pub fn render(station: &railway::RailwayStation,
 
             context.move_to(center_x, top_y as f64 + merge_line_offset);
             context.line_to(center_x, center_y as f64);
-            context.stroke();
+            context.stroke()?;
 
             for num in &track.from_tracks {
                 context.move_to((box_x(cell_area.x(), box_width, num.as_usize()) +
-                                 box_width / 2) as f64 + 1.0,
+                    box_width / 2) as f64 + 1.0,
                                 top_y as f64);
                 context.line_to(center_x, top_y as f64 + merge_line_offset);
-                context.stroke();
+                context.stroke()?;
             }
         }
 
@@ -67,14 +67,14 @@ pub fn render(station: &railway::RailwayStation,
 
             context.move_to(center_x, center_y as f64);
             context.line_to(center_x, bottom_y as f64 - merge_line_offset);
-            context.stroke();
+            context.stroke()?;
 
             for num in track.to_tracks.borrow().iter() {
                 context.move_to(center_x, bottom_y as f64 - merge_line_offset);
                 context.line_to((box_x(cell_area.x(), box_width, num.as_usize()) +
-                                 box_width / 2) as f64 + 1.0,
+                    box_width / 2) as f64 + 1.0,
                                 bottom_y as f64);
-                context.stroke();
+                context.stroke()?;
             }
         }
 
@@ -85,12 +85,12 @@ pub fn render(station: &railway::RailwayStation,
                         dot_radius as f64,
                         0.0,
                         2.0 * consts::PI);
-            context.fill();
+            context.fill()?;
         }
 
     }
 
     let tracks_width = calc_tracks_width(station, box_width);
-    (gtk::Rectangle::new(bg_area.x() + tracks_width, bg_area.y(), bg_area.width(), bg_area.height()),
-     gtk::Rectangle::new(cell_area.x() + tracks_width, cell_area.y(), cell_area.width(), cell_area.height()))
+    Ok((gtk::Rectangle::new(bg_area.x() + tracks_width, bg_area.y(), bg_area.width(), bg_area.height()),
+        gtk::Rectangle::new(cell_area.x() + tracks_width, cell_area.y(), cell_area.width(), cell_area.height())))
 }

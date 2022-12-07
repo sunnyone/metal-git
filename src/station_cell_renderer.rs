@@ -92,8 +92,8 @@ mod imp {
             flags: gtk::CellRendererState,
         ) {
             let rendered = self.station_wrapper.borrow().get_station().map(|x| {
-                station_renderer::render(&x, &cr, &background_area, &cell_area)
-            });
+                station_renderer::render(&x, &cr, &background_area, &cell_area).ok()
+            }).flatten();
 
             match rendered {
                 Some((new_bg_rect, new_cell_rect)) => self.parent_render(cr, widget,  &new_bg_rect, &new_cell_rect, flags),
