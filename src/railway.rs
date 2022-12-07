@@ -333,5 +333,5 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
     // 	for station in stations.iter() {
     // 		println!("{}", station.dump_tracks());
     // 	}
-    Ok((stations))
+    Ok(stations)
 }
