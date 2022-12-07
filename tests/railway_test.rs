@@ -3,7 +3,7 @@ extern crate tempdir;
 extern crate metal_git;
 
 mod util;
-use util::test_repo::TestRepo;
+use crate::util::test_repo::TestRepo;
 use metal_git::railway;
 
 #[test]

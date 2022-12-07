@@ -1,16 +1,14 @@
-extern crate gtk;
-extern crate git2;
-
 use std::rc::{Rc, Weak};
-use gtk::prelude::*;
-use window_manager::WindowManager;
-use repository_manager::RepositoryManager;
+use crate::window_manager::WindowManager;
+use crate::repository_manager::RepositoryManager;
 use git2::Error;
-use railway;
-use station_wrapper::StationWrapper;
-use gtk_utils;
+use crate::railway;
+use crate::station_wrapper::StationWrapper;
+use crate::station_cell_renderer::StationCellRenderer;
 
-use glib::object;
+use gtk::Inhibit;
+use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
+use gtk::traits::{ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt};
 
 pub struct HistoryWindow {
     window: gtk::Window,
@@ -33,19 +31,20 @@ impl HistoryWindow {
     pub fn new(window_manager: Weak<WindowManager>,
                repository_manager: Rc<RepositoryManager>)
                -> Rc<HistoryWindow> {
-        let builder = gtk::Builder::new_from_resource("/org/sunnyone/MetalGit/history_window.ui");
+        let builder = gtk::Builder::from_resource("/org/sunnyone/MetalGit/history_window.ui");
+
+        let col_types = [gtk::glib::types::Type::STRING, gtk::glib::types::Type::OBJECT];
 
         let history_window = HistoryWindow {
             window_manager: window_manager,
             repository_manager: repository_manager,
 
-            window: builder.get_object("history_window").unwrap(),
-            commit_button: builder.get_object("commit_button").unwrap(),
-            refresh_button: builder.get_object("refresh_button").unwrap(),
-            history_treeview: builder.get_object("history_treeview").unwrap(),
+            window: builder.object("history_window").unwrap(),
+            commit_button: builder.object("commit_button").unwrap(),
+            refresh_button: builder.object("refresh_button").unwrap(),
+            history_treeview: builder.object("history_treeview").unwrap(),
 
-            history_list_store: gtk::ListStore::new(&[String::static_type(),
-                                                      object::Object::static_type()]),
+            history_list_store: gtk::ListStore::new(&col_types),
         };
 
         Self::setup_history_tree(&history_window.history_treeview,
@@ -69,7 +68,7 @@ impl HistoryWindow {
     fn setup_history_tree(treeview: &gtk::TreeView, store: &gtk::ListStore) {
         treeview.set_model(Some(store));
 
-        let subject_renderer = ::station_cell_renderer::StationCellRenderer::new();
+        let subject_renderer = StationCellRenderer::new();
         let col = gtk::TreeViewColumn::new();
         col.set_title("Subject");
         col.pack_start(&subject_renderer, false);
@@ -93,7 +92,7 @@ impl HistoryWindow {
     }
 
     fn load_title(&self) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut title = String::new();
         if let Ok(reference) = repo.head() {
@@ -120,17 +119,16 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         self.history_list_store.clear();
 
-        let stations = try!(railway::collect_tree(&self.repository_manager));
+        let stations = railway::collect_tree(&self.repository_manager)?;
         for station in stations {
             let subject = Self::create_subject_markup(&station);
-
             let mut station_wrapper = StationWrapper::new();
             station_wrapper.set_station(station);
 
             self.history_list_store
                 .insert_with_values(None,
-                                    &[COLUMN_SUBJECT, COLUMN_STATION],
-                                    &[&subject, &station_wrapper]);
+                                    &[(COLUMN_SUBJECT, &subject),
+                                        (COLUMN_STATION, &station_wrapper)]);
         }
 
         Ok(())
@@ -141,12 +139,12 @@ impl HistoryWindow {
 
         for ref_name in &station.ref_names {
             let tag = format!("<span foreground=\"#a00000\"><b>[{}]</b></span>",
-                              &gtk_utils::escape_markup_text(&ref_name));
+                gtk::glib::markup_escape_text(&ref_name));
             markup.push_str(&tag);
         }
 
         markup.push(' ');
-        markup.push_str(&gtk_utils::escape_markup_text(&station.subject));
+        markup.push_str(&gtk::glib::markup_escape_text(&station.subject));
 
         markup
     }

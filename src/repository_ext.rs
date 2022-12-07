@@ -1,6 +1,3 @@
-
-extern crate git2;
-
 use std::path::{Path, PathBuf};
 
 pub trait RepositoryExt {

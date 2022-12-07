@@ -1,11 +1,9 @@
-extern crate git2;
-
 use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cell::RefCell;
 
 use git2::{Error, Oid};
-use repository_manager::RepositoryManager;
+use crate::repository_manager::RepositoryManager;
 
 #[derive(Clone, PartialEq)]
 pub struct RailwayTrack {
@@ -217,8 +215,9 @@ struct RefTable {
 impl RefTable {
     fn collect(repo: &git2::Repository) -> Result<RefTable, Error> {
         let mut table = HashMap::<Oid, Vec<String>>::new();
-        let refs = try!(repo.references());
+        let refs = repo.references()?;
         for r in refs {
+            let r = r?;
             if let Some(oid) = r.target() {
                 if let Some(shorthand) = r.shorthand() {
                     match table.entry(oid) {
@@ -245,19 +244,20 @@ impl RefTable {
 }
 
 pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<RailwayStation>, Error> {
-    let repo = try!(repository_manager.open());
+    let repo = repository_manager.open()?;
 
-    let ref_table = try!(RefTable::collect(&repo));
+    let ref_table = RefTable::collect(&repo)?;
 
-    let mut revwalk = try!(repo.revwalk());
+    let mut revwalk = repo.revwalk()?;
 
-    revwalk.set_sorting(git2::SORT_TIME);
-    try!(revwalk.push_head());
+    revwalk.set_sorting(git2::Sort::TIME)?;
+    revwalk.push_head()?;
 
     let mut track_line_map = TrackLineMap::new();
 
     let mut stations = Vec::<RailwayStation>::new();
     for oid in revwalk {
+        let oid = oid?;
         let mut prev_to_map = HashMap::new();
         if let Some(last_station) = stations.last() {
             track_line_map.vacuum_unused_track_numbers(last_station.tracks
@@ -279,7 +279,7 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
         }
 
 
-        let commit = try!(repo.find_commit(oid));
+        let commit = repo.find_commit(oid)?;
         let active_line_number = track_line_map.take_line_number_or_aquire(&oid);
 
         let mut is_first_non_merge = true;
@@ -333,5 +333,5 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
     // 	for station in stations.iter() {
     // 		println!("{}", station.dump_tracks());
     // 	}
-    Ok((stations))
+    Ok(stations)
 }

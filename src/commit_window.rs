@@ -1,7 +1,3 @@
-extern crate git2;
-extern crate gtk;
-extern crate gdk;
-
 use gtk::prelude::*;
 
 use std::rc::Rc;
@@ -17,9 +13,9 @@ use std::error;
 use git2::{Error, StatusOptions};
 use git2::build::CheckoutBuilder;
 
-use repository_manager::RepositoryManager;
-use gtk_utils;
-use repository_ext::RepositoryExt;
+use crate::repository_manager::RepositoryManager;
+use crate::gtk_utils;
+use crate::repository_ext::RepositoryExt;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -44,7 +40,7 @@ pub struct CommitWindow {
 
     repository_manager: Rc<RepositoryManager>,
 
-    commited: RefCell<Box<Fn() -> ()>>,
+    commited: RefCell<Box<dyn Fn() -> ()>>,
 }
 
 const FILENAME_COLUMN: u32 = 0;
@@ -56,36 +52,36 @@ enum TreeType {
 
 impl CommitWindow {
     pub fn new(repository_manager: Rc<RepositoryManager>) -> Rc<CommitWindow> {
-        let builder = gtk::Builder::new_from_resource("/org/sunnyone/MetalGit/commit_window.ui");
+        let builder = gtk::Builder::from_resource("/org/sunnyone/MetalGit/commit_window.ui");
 
         let commit_window = CommitWindow {
             repository_manager: repository_manager,
 
-            window: builder.get_object("commit_window").unwrap(),
+            window: builder.object("commit_window").unwrap(),
 
-            refresh_button: builder.get_object("refresh_button").unwrap(),
-            revert_button: builder.get_object("revert_button").unwrap(),
+            refresh_button: builder.object("refresh_button").unwrap(),
+            revert_button: builder.object("revert_button").unwrap(),
 
-            stage_button: builder.get_object("stage_button").unwrap(),
-            unstage_button: builder.get_object("unstage_button").unwrap(),
+            stage_button: builder.object("stage_button").unwrap(),
+            unstage_button: builder.object("unstage_button").unwrap(),
 
-            amend_checkbutton: builder.get_object("amend_checkbutton").unwrap(),
-            commit_button: builder.get_object("commit_button").unwrap(),
+            amend_checkbutton: builder.object("amend_checkbutton").unwrap(),
+            commit_button: builder.object("commit_button").unwrap(),
 
-            work_tree_files_list_store: builder.get_object("work_tree_files_list_store").unwrap(),
-            work_tree_files_tree_view: builder.get_object("work_tree_files_tree_view").unwrap(),
+            work_tree_files_list_store: builder.object("work_tree_files_list_store").unwrap(),
+            work_tree_files_tree_view: builder.object("work_tree_files_tree_view").unwrap(),
 
-            staged_files_list_store: builder.get_object("staged_files_list_store").unwrap(),
-            staged_files_tree_view: builder.get_object("staged_files_tree_view").unwrap(),
+            staged_files_list_store: builder.object("staged_files_list_store").unwrap(),
+            staged_files_tree_view: builder.object("staged_files_tree_view").unwrap(),
 
-            diff_text_view: builder.get_object("diff_text_view").unwrap(),
-            message_text_view: builder.get_object("message_text_view").unwrap(),
+            diff_text_view: builder.object("diff_text_view").unwrap(),
+            message_text_view: builder.object("message_text_view").unwrap(),
 
             commited: RefCell::new(Box::new(|| {})),
         };
 
         let commit_window = Rc::new(commit_window);
-        ::gtk_utils::modify_font_monospace(&commit_window.diff_text_view);
+        commit_window.diff_text_view.set_monospace(true);
 
         let w = Rc::downgrade(&commit_window);
         commit_window.window.connect_delete_event(move |_, _| {
@@ -99,7 +95,7 @@ impl CommitWindow {
         });
 
         let w = Rc::downgrade(&commit_window);
-        commit_window.work_tree_files_tree_view.get_selection().connect_changed(move |selection| {
+        commit_window.work_tree_files_tree_view.selection().connect_changed(move |selection| {
             let file = Self::get_selection_selected_file_single(selection);
 
             if let Some(file) = file {
@@ -109,7 +105,7 @@ impl CommitWindow {
         });
 
         let w = Rc::downgrade(&commit_window);
-        commit_window.staged_files_tree_view.get_selection().connect_changed(move |selection| {
+        commit_window.staged_files_tree_view.selection().connect_changed(move |selection| {
             let file = Self::get_selection_selected_file_single(selection);
 
             if let Some(file) = file {
@@ -165,10 +161,10 @@ impl CommitWindow {
 
         let w = Rc::downgrade(&commit_window);
         commit_window.message_text_view.connect_key_press_event(move |_, key| {
-            if key.get_state().intersects(gdk::CONTROL_MASK) {
-                let keyval = key.get_keyval();
+            if key.state().intersects(gtk::gdk::ModifierType::CONTROL_MASK) {
+                // TODO: works?
                 // TODO: "KP_Enter" is nessessary?
-                if gdk::keyval_name(keyval).map(|n| n == "Return").unwrap_or(false) {
+                if key.keyval().name().map(|n| n == "Return").unwrap_or(false) {
                     dialog_when_error!("Failed to commit: {:?}",
                                        w.upgrade().unwrap().commit_or_amend());
                     return Inhibit(true);
@@ -193,7 +189,7 @@ impl CommitWindow {
     }
 
     fn get_selection_selected_files(selection: &gtk::TreeSelection) -> Vec<String> {
-        let (tree_paths, model) = selection.get_selected_rows();
+        let (tree_paths, model) = selection.selected_rows();
         return tree_paths.iter()
                          .map(|path| Self::get_file_from_tree_path(&model, &path).unwrap())
                          .collect();
@@ -218,9 +214,9 @@ impl CommitWindow {
             fileset.insert(file);
         }
 
-        if let Some(tree_iter) = list_store.get_iter_first() {
+        if let Some(tree_iter) = list_store.iter_first() {
             loop {
-                let value = list_store.get_value(&tree_iter, FILENAME_COLUMN as i32);
+                let value = list_store.value(&tree_iter, FILENAME_COLUMN as i32);
                 let filename = value.get::<String>().unwrap();
                 if fileset.contains(&filename) {
                     selection.select_iter(&tree_iter);
@@ -233,19 +229,19 @@ impl CommitWindow {
         }
     }
 
-    fn get_file_from_tree_path<T: gtk::TreeModelExt>(list_store: &T,
+    fn get_file_from_tree_path<T: gtk::traits::TreeModelExt>(list_store: &T,
                                                      tree_path: &gtk::TreePath)
                                                      -> Option<String> {
-        list_store.get_iter(tree_path)
+        list_store.iter(tree_path)
                   .and_then(|iter| {
-                      let value = list_store.get_value(&iter, FILENAME_COLUMN as i32);
+                      let value = list_store.value(&iter, FILENAME_COLUMN as i32);
                       let s = value.get::<String>();
-                      s
+                      s.ok()
                   })
     }
 
     fn revert_button_clicked(&self) -> Result<(), Error> {
-        let selection = self.work_tree_files_tree_view.get_selection();
+        let selection = self.work_tree_files_tree_view.selection();
         let files = Self::get_selection_selected_files(&selection);
         if files.len() == 0 {
             return Ok(());
@@ -259,7 +255,7 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut builder = CheckoutBuilder::new();
         let mut to_checkout = false;
@@ -268,8 +264,8 @@ impl CommitWindow {
         let mut remove_file_paths = Vec::new();
         for file in &files {
             let file_path = Path::new(file);
-            let status = try!(repo.status_file(file_path));
-            if status == git2::STATUS_WT_NEW {
+            let status = repo.status_file(file_path)?;
+            if status == git2::Status::WT_NEW {
                 remove_file_paths.push(file_path);
             } else {
                 to_checkout = true;
@@ -278,7 +274,7 @@ impl CommitWindow {
         }
 
         if to_checkout {
-            try!(repo.checkout_head(Some(&mut builder)));
+            repo.checkout_head(Some(&mut builder))?;
         }
 
         for file_path in &remove_file_paths {
@@ -296,10 +292,10 @@ impl CommitWindow {
     }
 
     fn stage_button_clicked(&self) -> Result<(), Error> {
-        let selection = self.work_tree_files_tree_view.get_selection();
+        let selection = self.work_tree_files_tree_view.selection();
         let files = Self::get_selection_selected_files(&selection);
 
-        try!(self.stage_files(files));
+        self.stage_files(files)?;
 
         Ok(())
     }
@@ -309,21 +305,20 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
-        let mut index = try!(repo.index());
+        let repo = self.repository_manager.open()?;
+        let mut index = repo.index()?;
 
         for file in files {
             let file = Path::new(&file);
             let path_repo = repo.get_full_path(file).unwrap();
             if !fs::metadata(path_repo).is_ok() {
-                // check exists
-                try!(index.remove_path(&file));
+                index.remove_path(&file)?;
             } else {
-                try!(index.add_path(&file));
+                index.add_path(&file)?;
             }
         }
 
-        try!(index.write());
+        index.write()?;
 
         // TODO: partial update
         self.refresh();
@@ -332,10 +327,10 @@ impl CommitWindow {
     }
 
     fn unstage_button_clicked(&self) -> Result<(), Error> {
-        let selection = self.staged_files_tree_view.get_selection();
+        let selection = self.staged_files_tree_view.selection();
         let files = Self::get_selection_selected_files(&selection);
 
-        try!(self.unstage_files(files));
+        self.unstage_files(files)?;
 
         Ok(())
     }
@@ -345,12 +340,12 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
 
-        try!(repo.reset_default(Some(&head_object), files));
+        repo.reset_default(Some(&head_object), files)?;
 
         // TODO: partial update
         self.refresh();
@@ -359,16 +354,16 @@ impl CommitWindow {
     }
 
     fn amend_checkbutton_clicked(&self) -> Result<(), Error> {
-        let to_amend = self.amend_checkbutton.get_active();
+        let to_amend = self.amend_checkbutton.is_active();
         let commit_message = self.get_commit_message();
         if !to_amend || commit_message.len() > 0 {
             return Ok(());
         }
 
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
         let head_commit = head_object.as_commit().unwrap();
         let last_commit_message = head_commit.message();
 
@@ -380,47 +375,47 @@ impl CommitWindow {
     }
 
     fn get_commit_message(&self) -> String {
-        let buffer = self.message_text_view.get_buffer().unwrap();
-        let message = buffer.get_text(&buffer.get_start_iter(), &buffer.get_end_iter(), false)
+        let buffer = self.message_text_view.buffer().unwrap();
+        let message = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false)
                             .unwrap();
-        message
+        message.to_string()
     }
 
     fn set_commit_message(&self, message: &str) {
-        self.message_text_view.get_buffer().unwrap().set_text(message);
+        self.message_text_view.buffer().unwrap().set_text(message);
     }
 
     fn commit(&self, to_amend: bool) -> Result<(), Error> {
         let message = self.get_commit_message();
 
-        let repo = try!(self.repository_manager.open());
-        let signature = try!(repo.signature());
+        let repo = self.repository_manager.open()?;
+        let signature = repo.signature()?;
 
         // TODO: initial repository does not have a commit
-        let head_ref = try!(repo.head());
-        let head_object = try!(head_ref.peel(git2::ObjectType::Commit));
+        let head_ref = repo.head()?;
+        let head_object = head_ref.peel(git2::ObjectType::Commit)?;
         let head_commit = head_object.as_commit().unwrap();
 
-        let mut index = try!(repo.index());
-        let tree_oid = try!(index.write_tree());
+        let mut index = repo.index()?;
+        let tree_oid = index.write_tree()?;
         // TODO: use find_tree
-        let tree_object = try!(repo.find_object(tree_oid, Some(git2::ObjectType::Tree)));
+        let tree_object = repo.find_object(tree_oid, Some(git2::ObjectType::Tree))?;
         let tree = tree_object.as_tree().unwrap();
 
         if !to_amend {
-            try!(repo.commit(Some("HEAD"),
-                             &signature,
-                             &signature,
-                             &message,
-                             &tree,
-                             &[head_commit]));
+            repo.commit(Some("HEAD"),
+                        &signature,
+                        &signature,
+                        &message,
+                        &tree,
+                        &[head_commit])?;
         } else {
-            try!(head_commit.amend(Some("HEAD"),
-                                   Some(&signature),
-                                   Some(&signature),
-                                   None,
-                                   Some(&message),
-                                   Some(&tree)));
+            head_commit.amend(Some("HEAD"),
+                              Some(&signature),
+                              Some(&signature),
+                              None,
+                              Some(&message),
+                              Some(&tree))?;
         }
 
         // self.hide();
@@ -433,7 +428,7 @@ impl CommitWindow {
     }
 
     fn commit_or_amend(&self) -> Result<(), Error> {
-        let to_amend = self.amend_checkbutton.get_active();
+        let to_amend = self.amend_checkbutton.is_active();
 
         self.commit(to_amend)
     }
@@ -448,8 +443,8 @@ impl CommitWindow {
     }
 
     pub fn refresh(&self) {
-        let work_tree_selection = self.work_tree_files_tree_view.get_selection();
-        let staged_selection = self.staged_files_tree_view.get_selection();
+        let work_tree_selection = self.work_tree_files_tree_view.selection();
+        let staged_selection = self.staged_files_tree_view.selection();
 
         // back selected files up
         let work_selected = Self::get_selection_selected_files(&work_tree_selection);
@@ -462,7 +457,7 @@ impl CommitWindow {
         self.staged_files_list_store.clear();
 
         match collect_changed_status_items(&self.repository_manager) {
-            Err(_) => ::gtk_utils::message_box_error("Error!"),
+            Err(_) => crate::gtk_utils::message_box_error("Error!"),
             Ok(list) => {
                 for item in list {
                     let list_store = match item.tree_type {
@@ -470,7 +465,7 @@ impl CommitWindow {
                         TreeType::Index => &self.staged_files_list_store,
                     };
 
-                    let _ = list_store.insert_with_values(None, &[FILENAME_COLUMN], &[&item.path]);
+                    let _ = list_store.insert_with_values(None, &[(FILENAME_COLUMN, &item.path)]);
                 }
             }
         }
@@ -484,17 +479,17 @@ impl CommitWindow {
     }
 
     pub fn work_tree_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let path = Path::new(filename);
-        let status = try!(repo.status_file(path));
-        if status == git2::STATUS_WT_NEW {
+        let status = repo.status_file(path)?;
+        if status == git2::Status::WT_NEW {
             self.show_new_file(path);
             Ok(())
         } else {
             let mut diff_opts = git2::DiffOptions::new();
             diff_opts.pathspec(filename);
-            let diff = try!(repo.diff_index_to_workdir(None, Some(&mut diff_opts)));
+            let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
 
             self.show_diff(&diff);
 
@@ -503,16 +498,16 @@ impl CommitWindow {
     }
 
     pub fn index_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = try!(self.repository_manager.open());
+        let repo = self.repository_manager.open()?;
 
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(filename);
 
-        let head_ref = try!(repo.head());
-        let head_tree_object = try!(head_ref.peel(git2::ObjectType::Tree));
+        let head_ref = repo.head()?;
+        let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
         let head_tree = head_tree_object.as_tree().unwrap();
 
-        let diff = try!(repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)));
+        let diff = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts))?;
 
         self.show_diff(&diff);
 
@@ -520,10 +515,10 @@ impl CommitWindow {
     }
 
     fn show_diff(&self, diff: &git2::Diff) {
-        let buffer = self.diff_text_view.get_buffer().unwrap();
+        let buffer = self.diff_text_view.buffer().unwrap();
         buffer.set_text("");
 
-        let mut iter = buffer.get_start_iter();
+        let mut iter = buffer.start_iter();
         let _ = diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
             let o = line.origin();
             let tag_name = match o {
@@ -545,10 +540,10 @@ impl CommitWindow {
     }
 
     pub fn set_diff_all_add_text(&self, text: &str) {
-        let buffer = self.diff_text_view.get_buffer().unwrap();
+        let buffer = self.diff_text_view.buffer().unwrap();
         buffer.set_text("");
 
-        let mut iter = buffer.get_start_iter();
+        let mut iter = buffer.start_iter();
         gtk_utils::text_buffer_insert_with_tag_by_name(&buffer, &mut iter, text, "add");
     }
 
@@ -558,21 +553,20 @@ impl CommitWindow {
                 self.set_diff_all_add_text(&s);
             }
             Err(err) => {
-                use std::error::Error;
-                let msg = format!("This file is not browsable: {}", err.description());
+                let msg = format!("This file is not browsable: {}", err.to_string());
                 self.set_diff_all_add_text(&msg);
             }
         }
     }
 
-    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<error::Error>> {
-        let repo = try!(self.repository_manager.open());
+    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {
+        let repo = self.repository_manager.open()?;
 
         let path = repo.get_full_path(path_in_repository).unwrap();
         
         let mut s = String::new();
-        let mut f = try!(File::open(path));
-        try!(f.read_to_string(&mut s));
+        let mut f = File::open(path)?;
+        f.read_to_string(&mut s)?;
         Ok(s)
     }
 
@@ -590,7 +584,7 @@ struct StatusItem {
 
 fn collect_changed_status_items(repository_manager: &RepositoryManager)
                                 -> Result<Vec<StatusItem>, Error> {
-    let repo = try!(repository_manager.open());
+    let repo = repository_manager.open()?;
     if repo.is_bare() {
         return Err(Error::from_str("cannot report status on bare repository"));
     }
@@ -598,7 +592,7 @@ fn collect_changed_status_items(repository_manager: &RepositoryManager)
     let mut opts = StatusOptions::new();
     opts.include_untracked(true).recurse_untracked_dirs(true);
 
-    let statuses = try!(repo.statuses(Some(&mut opts)));
+    let statuses = repo.statuses(Some(&mut opts))?;
     let mut status_items: Vec<StatusItem> = Vec::new();
 
     for status in statuses.iter() {
