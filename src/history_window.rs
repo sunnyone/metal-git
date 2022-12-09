@@ -26,6 +26,8 @@ pub struct HistoryWindow {
 
 const COLUMN_SUBJECT: u32 = 0;
 const COLUMN_STATION: u32 = 1;
+const COLUMN_AUTHOR_NAME: u32 = 2;
+const COLUMN_TIME: u32 = 3;
 
 impl HistoryWindow {
     pub fn new(window_manager: Weak<WindowManager>,
@@ -33,7 +35,12 @@ impl HistoryWindow {
                -> Rc<HistoryWindow> {
         let builder = gtk::Builder::from_resource("/org/sunnyone/MetalGit/history_window.ui");
 
-        let col_types = [gtk::glib::types::Type::STRING, gtk::glib::types::Type::OBJECT];
+        let col_types = [
+            glib::types::Type::STRING,
+            glib::types::Type::OBJECT,
+            glib::types::Type::STRING,
+            glib::types::Type::STRING,
+        ];
 
         let history_window = HistoryWindow {
             window_manager: window_manager,
@@ -74,6 +81,20 @@ impl HistoryWindow {
         col.pack_start(&subject_renderer, false);
         col.add_attribute(&subject_renderer, "markup", COLUMN_SUBJECT as i32);
         col.add_attribute(&subject_renderer, "station", COLUMN_STATION as i32);
+        treeview.append_column(&col);
+
+        let renderer = gtk::CellRendererText::new();
+        let col = gtk::TreeViewColumn::new();
+        col.set_title("Author");
+        col.pack_start(&renderer, false);
+        col.add_attribute(&renderer, "text", COLUMN_AUTHOR_NAME as i32);
+        treeview.append_column(&col);
+
+        let renderer = gtk::CellRendererText::new();
+        let col = gtk::TreeViewColumn::new();
+        col.set_title("Time");
+        col.pack_start(&renderer, false);
+        col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
     }
 
@@ -122,13 +143,19 @@ impl HistoryWindow {
         let stations = railway::collect_tree(&self.repository_manager)?;
         for station in stations {
             let subject = Self::create_subject_markup(&station);
+            let author_name = station.author_name.clone();
+            let time = station.time.clone();
+
             let mut station_wrapper = StationWrapper::new();
             station_wrapper.set_station(station);
 
             self.history_list_store
                 .insert_with_values(None,
                                     &[(COLUMN_SUBJECT, &subject),
-                                        (COLUMN_STATION, &station_wrapper)]);
+                                        (COLUMN_STATION, &station_wrapper),
+                                        (COLUMN_AUTHOR_NAME, &author_name),
+                                        (COLUMN_TIME, &time)
+                                    ]);
         }
 
         Ok(())
