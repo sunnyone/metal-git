@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cell::RefCell;
 
+use chrono::*;
+
 use git2::{Error, Oid};
 use crate::repository_manager::RepositoryManager;
 
@@ -21,6 +23,8 @@ pub struct RailwayStation {
     pub oid: Oid,
     pub subject: String,
     pub ref_names: Vec<String>,
+    pub author_name: String,
+    pub time: String,
 
     active_track_index: usize,
 }
@@ -78,12 +82,17 @@ impl RailwayStation {
         let mut message_lines = commit.message().unwrap_or("").lines();
         let first_line = message_lines.next().unwrap_or("");
 
+        let time = commit.time();
+        let commit_time = FixedOffset::east_opt(time.offset_minutes() * 60).unwrap().timestamp_opt(time.seconds(), 0).unwrap();
+
         RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
             oid: commit.id(),
             subject: first_line.to_string(),
             ref_names: ref_names,
+            author_name: commit.message().unwrap_or("").to_string(),
+            time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z"))
         }
     }
 

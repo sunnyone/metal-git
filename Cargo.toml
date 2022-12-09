@@ -14,6 +14,7 @@ rustc-serialize = "0.3.24" # https://github.com/coeuvre/rust-2048/issues/30
 git2 = "^0.15"
 gtk = { version = "^0.16" }
 glib = { version = "^0.16" }
+chrono = "*"
 
 [dev-dependencies]
 tempdir = "0.3"
