@@ -2,13 +2,14 @@ use std::rc::{Rc, Weak};
 use crate::window_manager::WindowManager;
 use crate::repository_manager::RepositoryManager;
 use git2::Error;
+use glib::clone;
 use crate::railway;
 use crate::station_wrapper::StationWrapper;
 use crate::station_cell_renderer::StationCellRenderer;
 
 use gtk::Inhibit;
 use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
-use gtk::traits::{ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt};
+use gtk::traits::{TreeModelExt, ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt, TreeSelectionExt, TextViewExt, TextBufferExt};
 
 pub struct HistoryWindow {
     window: gtk::Window,
@@ -20,6 +21,7 @@ pub struct HistoryWindow {
     refresh_button: gtk::Button,
 
     history_treeview: gtk::TreeView,
+    commit_textview: gtk::TextView,
 
     history_list_store: gtk::ListStore,
 }
@@ -50,12 +52,12 @@ impl HistoryWindow {
             commit_button: builder.object("commit_button").unwrap(),
             refresh_button: builder.object("refresh_button").unwrap(),
             history_treeview: builder.object("history_treeview").unwrap(),
+            commit_textview: builder.object("commit_textview").unwrap(),
 
             history_list_store: gtk::ListStore::new(&col_types),
         };
 
-        Self::setup_history_tree(&history_window.history_treeview,
-                                 &history_window.history_list_store);
+        history_window.setup_history_tree();
 
         let history_window = Rc::new(history_window);
 
@@ -72,7 +74,10 @@ impl HistoryWindow {
         history_window
     }
 
-    fn setup_history_tree(treeview: &gtk::TreeView, store: &gtk::ListStore) {
+    fn setup_history_tree(&self) {
+        let treeview = &self.history_treeview;
+        let store = &self.history_list_store;
+
         treeview.set_model(Some(store));
 
         let subject_renderer = StationCellRenderer::new();
@@ -96,6 +101,32 @@ impl HistoryWindow {
         col.pack_start(&renderer, false);
         col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
+
+        let textview = &self.commit_textview;
+        let selection = treeview.selection();
+        selection.connect_changed(clone!(@weak textview => move |x| {
+            if let Some((model, iter)) = x.selected() {
+                let station_wrapper =
+                    model.value(&iter, COLUMN_STATION as i32)
+                        .get::<StationWrapper>()
+                        .expect("Incorrect column type");
+                let station = station_wrapper.get_station().unwrap();
+
+                let text = format!("commit {}
+Author: {}
+Date: {}
+
+{}",
+                   station.oid,
+                   station.author_name,
+                    station.time,
+                   station.message);
+
+                if let Some(buffer) = textview.buffer() {
+                    buffer.set_text(&text);
+                }
+            };
+        }));
     }
 
     pub fn connect_closed<F>(&self, callback: F)

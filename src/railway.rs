@@ -21,6 +21,7 @@ pub struct RailwayTrack {
 pub struct RailwayStation {
     pub tracks: Vec<RailwayTrack>,
     pub oid: Oid,
+    pub message: String,
     pub subject: String,
     pub ref_names: Vec<String>,
     pub author_name: String,
@@ -79,7 +80,8 @@ impl RailwayStation {
            -> RailwayStation {
         let active_track_index = tracks.iter().position(|x| x.is_active).unwrap();
 
-        let mut message_lines = commit.message().unwrap_or("").lines();
+        let message = commit.message().unwrap_or("");
+        let mut message_lines = message.lines();
         let first_line = message_lines.next().unwrap_or("");
 
         let time = commit.time();
@@ -89,6 +91,7 @@ impl RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
             oid: commit.id(),
+            message: message.to_string(), // TODO: get detailed data by each components
             subject: first_line.to_string(),
             ref_names: ref_names,
             author_name: commit.author().name().unwrap_or("").to_string(),
