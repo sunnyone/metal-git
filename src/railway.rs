@@ -21,7 +21,6 @@ pub struct RailwayTrack {
 pub struct RailwayStation {
     pub tracks: Vec<RailwayTrack>,
     pub oid: Oid,
-    pub message: String,
     pub subject: String,
     pub ref_names: Vec<String>,
     pub author_name: String,
@@ -91,7 +90,6 @@ impl RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
             oid: commit.id(),
-            message: message.to_string(), // TODO: get detailed data by each components
             subject: first_line.to_string(),
             ref_names: ref_names,
             author_name: commit.author().name().unwrap_or("").to_string(),

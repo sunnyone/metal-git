@@ -110,7 +110,7 @@ impl HistoryWindow {
                         .get::<StationWrapper>()
                         .expect("Incorrect column type");
                 let station = station_wrapper.get_station().unwrap();
-                w.upgrade().unwrap().commit_selected(&station);
+                w.upgrade().unwrap().commit_selected(&station).expect("Failed to get a commit");
             }
         });
     }
@@ -206,19 +206,25 @@ impl HistoryWindow {
         self.refresh();
     }
 
-    fn commit_selected(&self, station: &railway::RailwayStation) {
+    fn commit_selected(&self, station: &railway::RailwayStation) -> Result<(), git2::Error> {
+        let repo = self.repository_manager.open()?;
+        let commit = repo.find_commit(station.oid)?;
+
         let text = format!("commit {}
-Author: {}
+Author: {} <{}>
 Date: {}
 
 {}",
                            station.oid,
                            station.author_name,
+                           commit.author().email().unwrap_or(""),
                            station.time,
-                           station.message);
+                           commit.message().unwrap_or(""));
 
         if let Some(buffer) = self.commit_textview.buffer() {
             buffer.set_text(&text);
         }
+
+        Ok(())
     }
 }
