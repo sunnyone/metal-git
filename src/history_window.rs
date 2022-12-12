@@ -2,7 +2,6 @@ use std::rc::{Rc, Weak};
 use crate::window_manager::WindowManager;
 use crate::repository_manager::RepositoryManager;
 use git2::Error;
-use glib::clone;
 use crate::railway;
 use crate::station_wrapper::StationWrapper;
 use crate::station_cell_renderer::StationCellRenderer;
@@ -57,9 +56,9 @@ impl HistoryWindow {
             history_list_store: gtk::ListStore::new(&col_types),
         };
 
-        history_window.setup_history_tree();
-
         let history_window = Rc::new(history_window);
+
+        history_window.setup_history_tree();
 
         let w = Rc::downgrade(&history_window);
         history_window.commit_button.connect_clicked(move |_| {
@@ -74,7 +73,7 @@ impl HistoryWindow {
         history_window
     }
 
-    fn setup_history_tree(&self) {
+    fn setup_history_tree(self: &Rc<Self>) {
         let treeview = &self.history_treeview;
         let store = &self.history_list_store;
 
@@ -102,31 +101,18 @@ impl HistoryWindow {
         col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
 
-        let textview = &self.commit_textview;
         let selection = treeview.selection();
-        selection.connect_changed(clone!(@weak textview => move |x| {
+        let w = Rc::downgrade(self);
+        selection.connect_changed(move |x| {
             if let Some((model, iter)) = x.selected() {
                 let station_wrapper =
                     model.value(&iter, COLUMN_STATION as i32)
                         .get::<StationWrapper>()
                         .expect("Incorrect column type");
                 let station = station_wrapper.get_station().unwrap();
-
-                let text = format!("commit {}
-Author: {}
-Date: {}
-
-{}",
-                   station.oid,
-                   station.author_name,
-                    station.time,
-                   station.message);
-
-                if let Some(buffer) = textview.buffer() {
-                    buffer.set_text(&text);
-                }
-            };
-        }));
+                w.upgrade().unwrap().commit_selected(&station);
+            }
+        });
     }
 
     pub fn connect_closed<F>(&self, callback: F)
@@ -218,5 +204,21 @@ Date: {}
 
     fn refresh_button_clicked(&self) {
         self.refresh();
+    }
+
+    fn commit_selected(&self, station: &railway::RailwayStation) {
+        let text = format!("commit {}
+Author: {}
+Date: {}
+
+{}",
+                           station.oid,
+                           station.author_name,
+                           station.time,
+                           station.message);
+
+        if let Some(buffer) = self.commit_textview.buffer() {
+            buffer.set_text(&text);
+        }
     }
 }
