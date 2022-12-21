@@ -1,13 +1,14 @@
 use std::rc::{Rc, Weak};
 use crate::window_manager::WindowManager;
 use crate::repository_manager::RepositoryManager;
+use crate::commit_diff_panel::CommitDiffPanel;
 use git2::Error;
 use crate::railway;
 use crate::station_wrapper::StationWrapper;
 use crate::station_cell_renderer::StationCellRenderer;
 
 use gtk::Inhibit;
-use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual};
+use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual, NotebookExtManual};
 use gtk::traits::{TreeModelExt, ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt, TreeSelectionExt, TextViewExt, TextBufferExt};
 
 pub struct HistoryWindow {
@@ -16,8 +17,12 @@ pub struct HistoryWindow {
     window_manager: Weak<WindowManager>,
     repository_manager: Rc<RepositoryManager>,
 
+    commit_diff_panel: Rc<CommitDiffPanel>,
+
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
+
+    commit_notebook: gtk::Notebook,
 
     history_treeview: gtk::TreeView,
     commit_textview: gtk::TextView,
@@ -43,15 +48,20 @@ impl HistoryWindow {
             glib::types::Type::STRING,
         ];
 
+        let commit_diff_panel = CommitDiffPanel::new();
+
         let history_window = HistoryWindow {
-            window_manager: window_manager,
-            repository_manager: repository_manager,
+            window_manager,
+            repository_manager,
+            commit_diff_panel,
 
             window: builder.object("history_window").unwrap(),
             commit_button: builder.object("commit_button").unwrap(),
             refresh_button: builder.object("refresh_button").unwrap(),
             history_treeview: builder.object("history_treeview").unwrap(),
             commit_textview: builder.object("commit_textview").unwrap(),
+
+            commit_notebook: builder.object("commit_notebook").unwrap(),
 
             history_list_store: gtk::ListStore::new(&col_types),
         };
@@ -69,6 +79,12 @@ impl HistoryWindow {
         history_window.refresh_button.connect_clicked(move |_| {
             w.upgrade().unwrap().refresh_button_clicked();
         });
+
+        let container = history_window.commit_diff_panel.container();
+        let label = gtk::Label::new(Some("Diff"));
+        history_window.commit_notebook.append_page(
+            &container,
+            Some(&label));
 
         history_window
     }
@@ -101,6 +117,8 @@ impl HistoryWindow {
         col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
 
+        let textview = &self.commit_textview;
+        let commit_diff_panel = Rc::downgrade(&self.commit_diff_panel);
         let selection = treeview.selection();
         let w = Rc::downgrade(self);
         selection.connect_changed(move |x| {
@@ -111,6 +129,10 @@ impl HistoryWindow {
                         .expect("Incorrect column type");
                 let station = station_wrapper.get_station().unwrap();
                 w.upgrade().unwrap().commit_selected(&station).expect("Failed to get a commit");
+
+                if let Some(panel) = commit_diff_panel.upgrade() {
+                    panel.update_commit(&station.oid);
+                }
             }
         });
     }

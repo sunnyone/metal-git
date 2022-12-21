@@ -15,9 +15,11 @@ mod station_wrapper;
 mod commit_window;
 mod history_window;
 mod window_manager;
+mod commit_diff_panel;
 mod repository_ext;
 
 pub mod railway;
+
 use std::rc::Rc;
 
 #[allow(dead_code)]
