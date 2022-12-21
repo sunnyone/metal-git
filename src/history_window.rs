@@ -1,15 +1,18 @@
-use std::rc::{Rc, Weak};
-use crate::window_manager::WindowManager;
-use crate::repository_manager::RepositoryManager;
 use crate::commit_diff_panel::CommitDiffPanel;
-use git2::Error;
 use crate::railway;
-use crate::station_wrapper::StationWrapper;
+use crate::repository_manager::RepositoryManager;
 use crate::station_cell_renderer::StationCellRenderer;
+use crate::station_wrapper::StationWrapper;
+use crate::window_manager::WindowManager;
+use git2::Error;
+use std::rc::{Rc, Weak};
 
-use gtk::Inhibit;
 use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual, NotebookExtManual};
-use gtk::traits::{TreeModelExt, ButtonExt, GtkListStoreExt, TreeViewColumnExt, TreeViewExt, WidgetExt, GtkWindowExt, TreeSelectionExt, TextViewExt, TextBufferExt};
+use gtk::traits::{
+    ButtonExt, GtkListStoreExt, GtkWindowExt, TextBufferExt, TextViewExt, TreeModelExt,
+    TreeSelectionExt, TreeViewColumnExt, TreeViewExt, WidgetExt,
+};
+use gtk::Inhibit;
 
 pub struct HistoryWindow {
     window: gtk::Window,
@@ -36,9 +39,10 @@ const COLUMN_AUTHOR_NAME: u32 = 2;
 const COLUMN_TIME: u32 = 3;
 
 impl HistoryWindow {
-    pub fn new(window_manager: Weak<WindowManager>,
-               repository_manager: Rc<RepositoryManager>)
-               -> Rc<HistoryWindow> {
+    pub fn new(
+        window_manager: Weak<WindowManager>,
+        repository_manager: Rc<RepositoryManager>,
+    ) -> Rc<HistoryWindow> {
         let builder = gtk::Builder::from_resource("/org/sunnyone/MetalGit/history_window.ui");
 
         let col_types = [
@@ -48,7 +52,7 @@ impl HistoryWindow {
             glib::types::Type::STRING,
         ];
 
-        let commit_diff_panel = CommitDiffPanel::new();
+        let commit_diff_panel = CommitDiffPanel::new(Rc::clone(&repository_manager));
 
         let history_window = HistoryWindow {
             window_manager,
@@ -82,9 +86,9 @@ impl HistoryWindow {
 
         let container = history_window.commit_diff_panel.container();
         let label = gtk::Label::new(Some("Diff"));
-        history_window.commit_notebook.append_page(
-            &container,
-            Some(&label));
+        history_window
+            .commit_notebook
+            .append_page(&container, Some(&label));
 
         history_window
     }
@@ -117,7 +121,6 @@ impl HistoryWindow {
         col.add_attribute(&renderer, "text", COLUMN_TIME as i32);
         treeview.append_column(&col);
 
-        let textview = &self.commit_textview;
         let commit_diff_panel = Rc::downgrade(&self.commit_diff_panel);
         let selection = treeview.selection();
         let w = Rc::downgrade(self);
@@ -131,14 +134,15 @@ impl HistoryWindow {
                 w.upgrade().unwrap().commit_selected(&station).expect("Failed to get a commit");
 
                 if let Some(panel) = commit_diff_panel.upgrade() {
-                    panel.update_commit(&station.oid);
+                    panel.update_commit(station.oid);
                 }
             }
         });
     }
 
     pub fn connect_closed<F>(&self, callback: F)
-        where F: Fn() -> () + 'static
+    where
+        F: Fn() -> () + 'static,
     {
         self.window.connect_delete_event(move |_, _| {
             callback();
@@ -188,13 +192,15 @@ impl HistoryWindow {
             let mut station_wrapper = StationWrapper::new();
             station_wrapper.set_station(station);
 
-            self.history_list_store
-                .insert_with_values(None,
-                                    &[(COLUMN_SUBJECT, &subject),
-                                        (COLUMN_STATION, &station_wrapper),
-                                        (COLUMN_AUTHOR_NAME, &author_name),
-                                        (COLUMN_TIME, &time)
-                                    ]);
+            self.history_list_store.insert_with_values(
+                None,
+                &[
+                    (COLUMN_SUBJECT, &subject),
+                    (COLUMN_STATION, &station_wrapper),
+                    (COLUMN_AUTHOR_NAME, &author_name),
+                    (COLUMN_TIME, &time),
+                ],
+            );
         }
 
         Ok(())
@@ -204,8 +210,10 @@ impl HistoryWindow {
         let mut markup = String::new();
 
         for ref_name in &station.ref_names {
-            let tag = format!("<span foreground=\"#a00000\"><b>[{}]</b></span>",
-                gtk::glib::markup_escape_text(&ref_name));
+            let tag = format!(
+                "<span foreground=\"#a00000\"><b>[{}]</b></span>",
+                glib::markup_escape_text(&ref_name)
+            );
             markup.push_str(&tag);
         }
 

@@ -16,6 +16,7 @@ mod commit_window;
 mod history_window;
 mod window_manager;
 mod commit_diff_panel;
+mod commit_diff_util;
 mod repository_ext;
 
 pub mod railway;
