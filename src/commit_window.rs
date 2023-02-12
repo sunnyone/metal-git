@@ -16,6 +16,7 @@ use git2::build::CheckoutBuilder;
 use crate::repository_manager::RepositoryManager;
 use crate::gtk_utils;
 use crate::repository_ext::RepositoryExt;
+use crate::diff_text_view_util;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -516,27 +517,8 @@ impl CommitWindow {
 
     fn show_diff(&self, diff: &git2::Diff) {
         let buffer = self.diff_text_view.buffer().unwrap();
-        buffer.set_text("");
 
-        let mut iter = buffer.start_iter();
-        let _ = diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-            let o = line.origin();
-            let tag_name = match o {
-                ' ' => "normal",
-                '+' => "add",
-                '-' => "delete",
-                _ => "other",
-            };
-
-            let mut str = String::new();
-            if o == '+' || o == '-' || o == ' ' {
-                str.push(line.origin());
-            }
-            str.push_str(str::from_utf8(line.content()).unwrap());
-
-            gtk_utils::text_buffer_insert_with_tag_by_name(&buffer, &mut iter, &str, tag_name);
-            true
-        });
+        diff_text_view_util::print_diff_to_text_view(diff, &buffer);
     }
 
     pub fn set_diff_all_add_text(&self, text: &str) {
