@@ -8,6 +8,8 @@ pub struct ListCommitDiffFileEntry {
 }
 
 pub struct ListCommitDiffResult {
+    pub current_oid: Oid,
+    pub parent_oid: Oid,
     pub files: Vec<ListCommitDiffFileEntry>
 }
 
@@ -37,6 +39,8 @@ pub fn list_commit_diff_files(repository_manager: &RepositoryManager, oid: Oid) 
     )?;
 
     Ok(ListCommitDiffResult {
+        current_oid: oid,
+        parent_oid: parent_commit.id(),
         files
     })
 }
