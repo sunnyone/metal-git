@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use git2::{DiffOptions, Error, Oid};
 use glib::{Cast, StaticType};
-use gtk::traits::{PanedExt, TextViewExt, TreeModelExt, TreeSelectionExt, TreeViewExt};
+use gtk::traits::{ContainerExt, PanedExt, TextViewExt, TreeModelExt, TreeSelectionExt, TreeViewExt};
 use gtk::Orientation;
 use std::rc::Rc;
 use gtk::prelude::TreeViewColumnExt;
@@ -50,13 +50,18 @@ impl CommitDiffPanel {
 
         paned.pack1(&diff_tree_view, true, false);
 
+        let scrolled = gtk::ScrolledWindow::builder()
+            .build();
+
         let diff_text_buffer = create_diff_text_buffer();
         let commit_text_view = gtk::TextView::builder()
+            .editable(false)
             .buffer(&diff_text_buffer)
             .monospace(true)
             .build();
+        scrolled.add(&commit_text_view);
 
-        paned.pack2(&commit_text_view, true, false);
+        paned.pack2(&scrolled, true, false);
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {
             paned,
