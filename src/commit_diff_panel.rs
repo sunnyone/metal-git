@@ -53,6 +53,7 @@ impl CommitDiffPanel {
         let diff_text_buffer = create_diff_text_buffer();
         let commit_text_view = gtk::TextView::builder()
             .buffer(&diff_text_buffer)
+            .monospace(true)
             .build();
 
         paned.pack2(&commit_text_view, true, false);
