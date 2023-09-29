@@ -106,7 +106,7 @@ impl CommitDiffPanel {
                     model.value(&iter, COLUMN_INDEX as i32)
                         .get::<u32>()
                         .expect("Incorrect column type");
-                w.upgrade().unwrap().file_selected(index);
+                w.upgrade().unwrap().file_selected(index).expect("Failed to select a file");
             }
         });
     }

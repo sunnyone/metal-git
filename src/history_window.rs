@@ -134,7 +134,7 @@ impl HistoryWindow {
                 w.upgrade().unwrap().commit_selected(&station).expect("Failed to get a commit");
 
                 if let Some(panel) = commit_diff_panel.upgrade() {
-                    panel.update_commit(station.oid);
+                    panel.update_commit(station.oid).expect("Failed to update commit diff panel");
                 }
             }
         });
