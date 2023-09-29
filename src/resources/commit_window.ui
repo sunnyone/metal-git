@@ -7,43 +7,6 @@
     <property name="step-increment">1</property>
     <property name="page-increment">10</property>
   </object>
-  <object class="GtkTextTagTable" id="diff_text_tag_table">
-    <child type="tag">
-      <object class="GtkTextTag" id="add_tag">
-        <property name="name">add</property>
-        <property name="background">#ceead0</property>
-        <property name="foreground">black</property>
-        <property name="font">Normal</property>
-      </object>
-    </child>
-    <child type="tag">
-      <object class="GtkTextTag" id="delete_tag">
-        <property name="name">delete</property>
-        <property name="background">#f2c6c6</property>
-        <property name="foreground">black</property>
-        <property name="font">Normal</property>
-      </object>
-    </child>
-    <child type="tag">
-      <object class="GtkTextTag" id="normal_tag">
-        <property name="name">normal</property>
-        <property name="background">white</property>
-        <property name="foreground">black</property>
-        <property name="font">Normal</property>
-      </object>
-    </child>
-    <child type="tag">
-      <object class="GtkTextTag" id="other_tag">
-        <property name="name">other</property>
-        <property name="background">#e6e6e6</property>
-        <property name="foreground">black</property>
-        <property name="font">Normal</property>
-      </object>
-    </child>
-  </object>
-  <object class="GtkTextBuffer" id="diff_text_buffer">
-    <property name="tag-table">diff_text_tag_table</property>
-  </object>
   <object class="GtkListStore" id="staged_files_list_store">
     <columns>
       <!-- column-name filename -->
@@ -315,7 +278,6 @@
                     <property name="visible">True</property>
                     <property name="can-focus">True</property>
                     <property name="editable">False</property>
-                    <property name="buffer">diff_text_buffer</property>
                   </object>
                 </child>
               </object>

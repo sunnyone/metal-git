@@ -11,6 +11,7 @@ use gtk::prelude::GtkListStoreExtManual;
 use crate::commit_diff_util;
 use crate::commit_diff_util::ListCommitDiffResult;
 use crate::diff_text_view_util;
+use crate::diff_text_view_util::create_diff_text_buffer;
 use crate::repository_manager::RepositoryManager;
 
 pub struct CommitDiffPanel {
@@ -49,7 +50,10 @@ impl CommitDiffPanel {
 
         paned.pack1(&diff_tree_view, true, false);
 
-        let commit_text_view = gtk::TextView::new();
+        let diff_text_buffer = create_diff_text_buffer();
+        let commit_text_view = gtk::TextView::builder()
+            .buffer(&diff_text_buffer)
+            .build();
 
         paned.pack2(&commit_text_view, true, false);
 

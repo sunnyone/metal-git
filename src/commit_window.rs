@@ -17,6 +17,7 @@ use crate::repository_manager::RepositoryManager;
 use crate::gtk_utils;
 use crate::repository_ext::RepositoryExt;
 use crate::diff_text_view_util;
+use crate::diff_text_view_util::create_diff_text_buffer;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -83,6 +84,9 @@ impl CommitWindow {
 
         let commit_window = Rc::new(commit_window);
         commit_window.diff_text_view.set_monospace(true);
+
+        let diff_text_buffer = create_diff_text_buffer();
+        commit_window.diff_text_view.set_buffer(Some(&diff_text_buffer));
 
         let w = Rc::downgrade(&commit_window);
         commit_window.window.connect_delete_event(move |_, _| {
