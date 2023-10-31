@@ -1,12 +1,14 @@
-use std::cell::RefCell;
 use git2::{DiffOptions, Error, Oid};
 use glib::{Cast, StaticType};
-use gtk::traits::{ContainerExt, PanedExt, TextViewExt, TreeModelExt, TreeSelectionExt, TreeViewExt};
-use gtk::Orientation;
-use std::rc::Rc;
-use gtk::prelude::TreeViewColumnExt;
 use gtk::prelude::GtkListStoreExt;
 use gtk::prelude::GtkListStoreExtManual;
+use gtk::prelude::TreeViewColumnExt;
+use gtk::traits::{
+    ContainerExt, PanedExt, TextViewExt, TreeModelExt, TreeSelectionExt, TreeViewExt,
+};
+use gtk::Orientation;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::commit_diff_util;
 use crate::commit_diff_util::ListCommitDiffResult;
@@ -23,7 +25,7 @@ pub struct CommitDiffPanel {
     commit_text_view: gtk::TextView,
 
     repository_manager: Rc<RepositoryManager>,
-    current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>
+    current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>,
 }
 
 const COLUMN_FILENAME: u32 = 0;
@@ -35,7 +37,7 @@ impl CommitDiffPanel {
 
         let diff_list_store = gtk::ListStore::new(&[
             String::static_type(), // COLUMN_FILENAME
-            u32::static_type(), // COLUMN_INDEX
+            u32::static_type(),    // COLUMN_INDEX
         ]);
 
         let diff_tree_view = gtk::TreeView::new();
@@ -50,8 +52,7 @@ impl CommitDiffPanel {
 
         paned.pack1(&diff_tree_view, true, false);
 
-        let scrolled = gtk::ScrolledWindow::builder()
-            .build();
+        let scrolled = gtk::ScrolledWindow::builder().build();
 
         let diff_text_buffer = create_diff_text_buffer();
         let commit_text_view = gtk::TextView::builder()
@@ -82,7 +83,8 @@ impl CommitDiffPanel {
     }
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {
-        let result = commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
+        let result =
+            commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
 
         self.diff_list_store.clear();
 
@@ -107,11 +109,14 @@ impl CommitDiffPanel {
         let w = Rc::downgrade(self);
         selection.connect_changed(move |x| {
             if let Some((model, iter)) = x.selected() {
-                let index =
-                    model.value(&iter, COLUMN_INDEX as i32)
-                        .get::<u32>()
-                        .expect("Incorrect column type");
-                w.upgrade().unwrap().file_selected(index).expect("Failed to select a file");
+                let index = model
+                    .value(&iter, COLUMN_INDEX as i32)
+                    .get::<u32>()
+                    .expect("Incorrect column type");
+                w.upgrade()
+                    .unwrap()
+                    .file_selected(index)
+                    .expect("Failed to select a file");
             }
         });
     }
@@ -132,7 +137,8 @@ impl CommitDiffPanel {
             let mut opts = DiffOptions::new();
             opts.pathspec(new_file_path);
 
-            let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
+            let diff =
+                repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
 
             if let Some(buffer) = self.commit_text_view.buffer() {
                 diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
