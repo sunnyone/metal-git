@@ -50,7 +50,9 @@ impl CommitDiffPanel {
         col.add_attribute(&renderer, "text", COLUMN_FILENAME as i32);
         diff_tree_view.append_column(&col);
 
-        paned.pack1(&diff_tree_view, true, false);
+        let scrolled = gtk::ScrolledWindow::builder().build();
+        scrolled.add(&diff_tree_view);
+        paned.pack1(&scrolled, true, false);
 
         let scrolled = gtk::ScrolledWindow::builder().build();
 
