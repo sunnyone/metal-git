@@ -10,7 +10,7 @@ name = "metal_git"
 path = "src/main.rs"
 
 [dependencies]
-git2 = "^0.15"
+git2 = "^0.18"
 gtk = { version = "^0.16" }
 glib = { version = "^0.16" }
 chrono = "*"
