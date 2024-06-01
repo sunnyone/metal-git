@@ -3,7 +3,7 @@ use gtk::glib::subclass::prelude::*;
 use gtk::subclass::prelude::*;
 use std::cell::RefCell;
 use glib;
-use glib::once_cell::sync::Lazy;
+use std::sync::OnceLock;
 
 const PROP_NUM: usize = 1;
 const PROP_STATION: usize = 2;
@@ -31,7 +31,9 @@ mod imp {
 
     impl ObjectImpl for StationCellRendererImpl {
         fn properties() -> &'static [glib::ParamSpec] {
-            static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
+            static PROPERTIES: OnceLock<Vec<glib::ParamSpec>> = OnceLock::new();
+
+            let value = PROPERTIES.get_or_init(|| {
                 vec![
                     glib::ParamSpecInt::new(
                         "num",
@@ -52,7 +54,7 @@ mod imp {
                 ]
             });
 
-            PROPERTIES.as_ref()
+            value.as_ref()
         }
 
         fn set_property(&self, _id: usize, value: &glib::Value, _pspec: &glib::ParamSpec) {
@@ -96,15 +98,13 @@ mod imp {
             }).flatten();
 
             match rendered {
-                Some((new_bg_rect, new_cell_rect)) => self.parent_render(cr, widget,  &new_bg_rect, &new_cell_rect, flags),
+                Some((new_bg_rect, new_cell_rect)) => self.parent_render(cr, widget, &new_bg_rect, &new_cell_rect, flags),
                 None => self.parent_render(cr, widget, background_area, cell_area, flags)
             }
         }
     }
 
-    impl CellRendererTextImpl for StationCellRendererImpl {
-
-    }
+    impl CellRendererTextImpl for StationCellRendererImpl {}
 }
 
 glib::wrapper! {
