@@ -6,13 +6,13 @@ use crate::station_wrapper::StationWrapper;
 use crate::window_manager::WindowManager;
 use git2::Error;
 use std::rc::{Rc, Weak};
+use gtk::glib::Propagation;
 
 use gtk::prelude::{BuilderExtManual, GtkListStoreExtManual, NotebookExtManual};
 use gtk::traits::{
     ButtonExt, GtkListStoreExt, GtkWindowExt, TextBufferExt, TextViewExt, TreeModelExt,
     TreeSelectionExt, TreeViewColumnExt, TreeViewExt, WidgetExt,
 };
-use gtk::Inhibit;
 
 pub struct HistoryWindow {
     window: gtk::Window,
@@ -141,12 +141,12 @@ impl HistoryWindow {
     }
 
     pub fn connect_closed<F>(&self, callback: F)
-    where
-        F: Fn() -> () + 'static,
+        where
+            F: Fn() -> () + 'static,
     {
         self.window.connect_delete_event(move |_, _| {
             callback();
-            Inhibit(false)
+            Propagation::Proceed
         });
     }
 
