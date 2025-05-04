@@ -103,6 +103,8 @@ impl CommitDiffPanel {
 
         self.current_list_result.replace(Some(Rc::new(result)));
 
+        self.show_all_files_diff()?;
+
         Ok(())
     }
 
@@ -141,6 +143,26 @@ impl CommitDiffPanel {
 
             let diff =
                 repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
+
+            if let Some(buffer) = self.commit_text_view.buffer() {
+                diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn show_all_files_diff(&self) -> Result<(), Error> {
+        if let Some(list_result) = self.current_list_result.borrow().as_ref() {
+            let repo = self.repository_manager.open()?;
+
+            let current_commit = repo.find_commit(list_result.current_oid)?;
+            let parent_commit = repo.find_commit(list_result.parent_oid)?;
+
+            let parent_tree = parent_commit.tree()?;
+            let current_tree = current_commit.tree()?;
+
+            let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
 
             if let Some(buffer) = self.commit_text_view.buffer() {
                 diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
