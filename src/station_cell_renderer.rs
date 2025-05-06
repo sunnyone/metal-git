@@ -2,14 +2,14 @@ use gtk::glib::prelude::*;
 use gtk::glib::subclass::prelude::*;
 use gtk::subclass::prelude::*;
 use std::cell::RefCell;
-use glib;
 use std::sync::OnceLock;
 
 const PROP_NUM: usize = 1;
 const PROP_STATION: usize = 2;
 
 mod imp {
-    use glib::IsA;
+    use gtk::glib;
+    use gtk::glib::object::IsA;
     use gtk::Widget;
     use crate::station_wrapper::StationWrapper;
     use crate::station_renderer;
@@ -35,22 +35,19 @@ mod imp {
 
             let value = PROPERTIES.get_or_init(|| {
                 vec![
-                    glib::ParamSpecInt::new(
-                        "num",
-                        "Num",
-                        "Num",
-                        0,
-                        65535,
-                        0,
-                        glib::ParamFlags::READWRITE,
-                    ),
-                    glib::ParamSpecObject::new(
-                        "station",
-                        "Station",
-                        "Station",
-                        StationWrapper::static_type(),
-                        glib::ParamFlags::READWRITE,
-                    ),
+                    glib::ParamSpecInt::builder("num")
+                        .nick("Num")
+                        .blurb("Num")
+                        .minimum(0)
+                        .maximum(65535)
+                        .default_value(0)
+                        .flags(glib::ParamFlags::READWRITE)
+                        .build(),
+                    glib::ParamSpecObject::builder::<StationWrapper>("station")
+                        .nick("Station")
+                        .blurb("Station")
+                        .flags(glib::ParamFlags::READWRITE)
+                        .build(),
                 ]
             });
 
@@ -107,12 +104,12 @@ mod imp {
     impl CellRendererTextImpl for StationCellRendererImpl {}
 }
 
-glib::wrapper! {
+gtk::glib::wrapper! {
      pub struct StationCellRenderer(ObjectSubclass<imp::StationCellRendererImpl>) @extends gtk::CellRenderer;
 }
 
 impl StationCellRenderer {
     pub fn new() -> Self {
-        gtk::glib::Object::new(&[])
+        gtk::glib::Object::new()
     }
 }

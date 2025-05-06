@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gtk::glib;
 use gtk::glib::subclass::prelude::*;
 
 use crate::railway::RailwayStation;
@@ -31,15 +32,15 @@ gtk::glib::wrapper! {
 
 impl StationWrapper {
     pub fn new() -> Self {
-        gtk::glib::Object::new(&[])
+        gtk::glib::Object::new()
     }
 
     pub fn get_impl(&self) -> &imp::StationWrapperImpl {
-        imp::StationWrapperImpl::from_instance(self)
+        imp::StationWrapperImpl::from_obj(self)
     }
 
     pub fn get_station(&self) -> Option<Rc<RailwayStation>> {
-        let priv_ = imp::StationWrapperImpl::from_instance(self);
+        let priv_ = imp::StationWrapperImpl::from_obj(self);
         let station_ref = priv_.station.borrow();
         match station_ref.as_ref() {
             Some(x) => Some(Rc::clone(x)),
@@ -48,7 +49,7 @@ impl StationWrapper {
     }
 
     pub fn set_station(&mut self, station: RailwayStation) {
-        let priv_ = imp::StationWrapperImpl::from_instance(self);
+        let priv_ = imp::StationWrapperImpl::from_obj(self);
         priv_.station.replace(Some(Rc::new(station)));
     }
 }

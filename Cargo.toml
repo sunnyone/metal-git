@@ -7,14 +7,12 @@ edition = "2021"
 
 [lib]
 name = "metal_git"
-path = "src/main.rs"
 
 [dependencies]
 git2 = "^0.18"
 gtk = { version = "^0.18.1" }
-glib = { version = "^0.19" }
+glib = { version = "^0.18" }
 chrono = "*"
 
 [dev-dependencies]
 tempdir = "0.3"
-

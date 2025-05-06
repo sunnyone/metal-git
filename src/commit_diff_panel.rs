@@ -1,5 +1,5 @@
 use git2::{DiffOptions, Error, Oid};
-use glib::{Cast, StaticType};
+use gtk::glib::prelude::{Cast, StaticType};
 use gtk::prelude::GtkListStoreExt;
 use gtk::prelude::GtkListStoreExtManual;
 use gtk::prelude::TreeViewColumnExt;
