@@ -1,5 +1,4 @@
 use git2::{DiffOptions, Error, Oid};
-use glib::{Cast, StaticType};
 use gtk::prelude::GtkListStoreExt;
 use gtk::prelude::GtkListStoreExtManual;
 use gtk::prelude::TreeViewColumnExt;
@@ -81,7 +80,7 @@ impl CommitDiffPanel {
     }
 
     pub fn container(&self) -> gtk::Container {
-        self.paned.clone().upcast::<gtk::Container>()
+        self.paned.upcast::<gtk::Container>()
     }
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {

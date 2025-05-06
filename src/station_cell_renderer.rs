@@ -9,7 +9,7 @@ const PROP_NUM: usize = 1;
 const PROP_STATION: usize = 2;
 
 mod imp {
-    use glib::IsA;
+    use glib::object::IsA;
     use gtk::Widget;
     use crate::station_wrapper::StationWrapper;
     use crate::station_renderer;
@@ -113,6 +113,6 @@ glib::wrapper! {
 
 impl StationCellRenderer {
     pub fn new() -> Self {
-        gtk::glib::Object::new(&[])
+        gtk::glib::Object::new()
     }
 }
