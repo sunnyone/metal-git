@@ -1,12 +1,5 @@
 use git2::{DiffOptions, Error, Oid};
-use gtk::glib::prelude::{Cast, StaticType};
-use gtk::prelude::GtkListStoreExt;
-use gtk::prelude::GtkListStoreExtManual;
-use gtk::prelude::TreeViewColumnExt;
-use gtk::traits::{
-    ContainerExt, PanedExt, TextViewExt, TreeModelExt, TreeSelectionExt, TreeViewExt,
-};
-use gtk::Orientation;
+use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -18,43 +11,27 @@ use crate::repository_manager::RepositoryManager;
 
 pub struct CommitDiffPanel {
     paned: gtk::Paned,
-
-    diff_list_store: gtk::ListStore,
-    diff_tree_view: gtk::TreeView,
-
+    diff_list_box: gtk::ListBox,
     commit_text_view: gtk::TextView,
-
     repository_manager: Rc<RepositoryManager>,
     current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>,
 }
 
-const COLUMN_FILENAME: u32 = 0;
-const COLUMN_INDEX: u32 = 1;
-
 impl CommitDiffPanel {
     pub fn new(repository_manager: Rc<RepositoryManager>) -> Rc<CommitDiffPanel> {
-        let paned = gtk::Paned::new(Orientation::Horizontal);
+        let paned = gtk::Paned::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .build();
 
-        let diff_list_store = gtk::ListStore::new(&[
-            String::static_type(), // COLUMN_FILENAME
-            u32::static_type(),    // COLUMN_INDEX
-        ]);
+        let diff_list_box = gtk::ListBox::new();
+        diff_list_box.set_selection_mode(gtk::SelectionMode::Single);
 
-        let diff_tree_view = gtk::TreeView::new();
-        diff_tree_view.set_model(Some(&diff_list_store));
-
-        let renderer = gtk::CellRendererText::new();
-        let col = gtk::TreeViewColumn::new();
-        col.set_title("Filename");
-        col.pack_start(&renderer, false);
-        col.add_attribute(&renderer, "text", COLUMN_FILENAME as i32);
-        diff_tree_view.append_column(&col);
-
-        let scrolled = gtk::ScrolledWindow::builder().build();
-        scrolled.add(&diff_tree_view);
-        paned.pack1(&scrolled, true, false);
-
-        let scrolled = gtk::ScrolledWindow::builder().build();
+        let list_scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .child(&diff_list_box)
+            .build();
+        paned.set_start_child(Some(&list_scrolled));
 
         let diff_text_buffer = create_diff_text_buffer();
         let commit_text_view = gtk::TextView::builder()
@@ -62,70 +39,72 @@ impl CommitDiffPanel {
             .buffer(&diff_text_buffer)
             .monospace(true)
             .build();
-        scrolled.add(&commit_text_view);
 
-        paned.pack2(&scrolled, true, false);
+        let text_scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .child(&commit_text_view)
+            .build();
+        paned.set_end_child(Some(&text_scrolled));
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {
             paned,
-            diff_list_store,
-            diff_tree_view,
+            diff_list_box,
             commit_text_view,
             repository_manager,
             current_list_result: RefCell::new(None),
         });
 
-        commit_diff_panel.setup_tree_view();
-
+        commit_diff_panel.setup_list_box();
         commit_diff_panel
     }
 
-    pub fn container(&self) -> gtk::Container {
-        self.paned.clone().upcast::<gtk::Container>()
+    pub fn widget(&self) -> gtk::Widget {
+        self.paned.clone().upcast::<gtk::Widget>()
     }
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {
         let result =
             commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
 
-        self.diff_list_store.clear();
+        clear_list_box(&self.diff_list_box);
 
-        for (i, x) in result.files.iter().enumerate() {
-            let index: u32 = i as u32;
-            self.diff_list_store.insert_with_values(
-                None,
-                &[
-                    (COLUMN_FILENAME, &x.format_file_move()),
-                    (COLUMN_INDEX, &index),
-                ],
-            );
+        for entry in &result.files {
+            let label = gtk::Label::builder()
+                .label(&entry.format_file_move())
+                .xalign(0.0)
+                .build();
+            self.diff_list_box.append(&label);
         }
 
         self.current_list_result.replace(Some(Rc::new(result)));
-
         self.show_all_files_diff()?;
+        self.diff_list_box.unselect_all();
 
         Ok(())
     }
 
-    fn setup_tree_view(self: &Rc<Self>) {
-        let selection = self.diff_tree_view.selection();
+    fn setup_list_box(self: &Rc<Self>) {
         let w = Rc::downgrade(self);
-        selection.connect_changed(move |x| {
-            if let Some((model, iter)) = x.selected() {
-                let index = model
-                    .value(&iter, COLUMN_INDEX as i32)
-                    .get::<u32>()
-                    .expect("Incorrect column type");
-                w.upgrade()
-                    .unwrap()
-                    .file_selected(index)
+        self.diff_list_box.connect_selected_rows_changed(move |list_box| {
+            let Some(panel) = w.upgrade() else {
+                return;
+            };
+
+            let Some(row) = list_box.selected_row() else {
+                return;
+            };
+
+            let index = row.index();
+            if index >= 0 {
+                panel
+                    .file_selected(index as u32)
                     .expect("Failed to select a file");
             }
         });
     }
 
-    fn file_selected(self: &Rc<Self>, file_index: u32) -> Result<(), Error> {
+    fn file_selected(&self, file_index: u32) -> Result<(), Error> {
         if let Some(list_result) = self.current_list_result.borrow().as_ref() {
             let repo = self.repository_manager.open()?;
 
@@ -144,9 +123,8 @@ impl CommitDiffPanel {
             let diff =
                 repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
 
-            if let Some(buffer) = self.commit_text_view.buffer() {
-                diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
-            }
+            let buffer = self.commit_text_view.buffer();
+            diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
         }
 
         Ok(())
@@ -164,11 +142,16 @@ impl CommitDiffPanel {
 
             let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
 
-            if let Some(buffer) = self.commit_text_view.buffer() {
-                diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
-            }
+            let buffer = self.commit_text_view.buffer();
+            diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
         }
 
         Ok(())
+    }
+}
+
+fn clear_list_box(list_box: &gtk::ListBox) {
+    while let Some(row) = list_box.row_at_index(0) {
+        list_box.remove(&row);
     }
 }

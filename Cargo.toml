@@ -2,7 +2,6 @@
 name = "metal-git"
 version = "0.0.1"
 authors = ["Yoichi Imai <sunnyone41@gmail.com>"]
-build = "build.rs"
 edition = "2021"
 
 [lib]
@@ -10,8 +9,7 @@ name = "metal_git"
 
 [dependencies]
 git2 = "^0.18"
-gtk = { version = "^0.18.1" }
-glib = { version = "^0.18" }
+gtk = { package = "gtk4", version = "0.9" }
 chrono = "*"
 
 [dev-dependencies]

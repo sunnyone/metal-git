@@ -1,7 +1,7 @@
 use git2::Diff;
-use gtk::TextBuffer;
-use gtk::traits::{TextBufferExt, TextTagTableExt};
 use crate::gtk_utils;
+use gtk::prelude::*;
+use gtk::TextBuffer;
 use std::str;
 
 pub fn create_diff_text_buffer() -> gtk::TextBuffer {

@@ -17,7 +17,7 @@ pub struct RailwayTrack {
     pub to_lines: Vec<LineNumber>,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct RailwayStation {
     pub tracks: Vec<RailwayTrack>,
     pub oid: Oid,
