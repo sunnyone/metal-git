@@ -1,10 +1,12 @@
 use std::rc::Rc;
 use std::cell::RefCell;
+use gtk::prelude::*;
 use crate::history_window::HistoryWindow;
 use crate::commit_window::CommitWindow;
 use crate::repository_manager::RepositoryManager;
 
 pub struct WindowManager {
+    app: gtk::Application,
     windows: RefCell<Option<Windows>>,
 }
 
@@ -14,13 +16,19 @@ struct Windows {
 }
 
 impl WindowManager {
-    pub fn new(repository_manager: Rc<RepositoryManager>) -> Rc<WindowManager> {
-        let window_manager = Rc::new(WindowManager { windows: RefCell::new(None) });
+    pub fn new(app: &gtk::Application, repository_manager: Rc<RepositoryManager>) -> Rc<WindowManager> {
+        let window_manager = Rc::new(WindowManager {
+            app: app.clone(),
+            windows: RefCell::new(None),
+        });
 
         let windows = Windows {
-            history_window: HistoryWindow::new(Rc::downgrade(&window_manager),
-                                               repository_manager.clone()),
-            commit_window: CommitWindow::new(repository_manager.clone()),
+            history_window: HistoryWindow::new(
+                app,
+                Rc::downgrade(&window_manager),
+                repository_manager.clone(),
+            ),
+            commit_window: CommitWindow::new(app, repository_manager.clone()),
         };
 
         *window_manager.windows.borrow_mut() = Some(windows);
@@ -37,9 +45,11 @@ impl WindowManager {
     }
 
     pub fn start(&self) {
+        let app = self.app.clone();
         self.with_windows(|windows| {
-            windows.history_window.connect_closed(|| {
-                gtk::main_quit();
+            let app = app.clone();
+            windows.history_window.connect_closed(move || {
+                app.quit();
             });
 
             windows.history_window.show();

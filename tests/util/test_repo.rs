@@ -10,8 +10,11 @@ use std::path::Path;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::process::Command;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use metal_git::repository_manager::RepositoryManager;
+
+static NEXT_COMMIT_TIME: AtomicI64 = AtomicI64::new(1_700_000_000);
 
 pub struct TestRepo {
 	temp_dir: TempDir,
@@ -44,7 +47,12 @@ fn test_commit<'repo, 'a>(repo: &'repo Repository,
 	branch_name: &'repo str,
 	message: &'repo str, 
 	parents: &'a [&'a Commit]) -> Commit<'repo> {
-	let signature = Signature::now("test commit", "test@example.com").unwrap();
+	let commit_time = NEXT_COMMIT_TIME.fetch_add(1, Ordering::SeqCst);
+	let signature = Signature::new(
+		"test commit",
+		"test@example.com",
+		&git2::Time::new(commit_time, 0),
+	).unwrap();
 	
 	let treebuilder = repo.treebuilder(None).unwrap();
 	let tree_oid = treebuilder.write().unwrap();
@@ -76,7 +84,8 @@ impl TestRepo {
 	fn new(prefix: &str) -> TestRepo {
 		let prefix_testrepo = format!("testrepo-{}", prefix);
 		let temp_dir = TempDir::new(&prefix_testrepo).expect("Failed to create tempdir");
-		let _ = Repository::init(temp_dir.path()).unwrap();
+		let repo = Repository::init(temp_dir.path()).unwrap();
+		repo.set_head("refs/heads/master").unwrap();
 		
 		TestRepo {
 			temp_dir: temp_dir,

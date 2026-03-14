@@ -1,17 +1,14 @@
 extern crate git2;
-extern crate glib;
 extern crate gtk;
+
+use gtk::prelude::*;
 
 pub mod repository_manager;
 
-mod static_resource;
 #[macro_use]
 mod gtk_utils;
 
 mod station_renderer;
-mod station_cell_renderer;
-mod station_wrapper;
-
 mod commit_window;
 mod history_window;
 mod window_manager;
@@ -23,17 +20,21 @@ mod repository_ext;
 
 pub mod railway;
 
-use std::rc::Rc;
-
 pub fn run_app() {
-    gtk::init().unwrap();
-    static_resource::init();
+    let app = gtk::Application::builder()
+        .application_id("org.sunnyone.MetalGit")
+        .build();
 
-    let repository_manager = repository_manager::RepositoryManager::new();
-    repository_manager.set_work_dir_path(".");
+    app.connect_activate(|app| {
+        let repository_manager = repository_manager::RepositoryManager::new();
+        repository_manager.set_work_dir_path(".");
 
-    let window_manager = Rc::new(window_manager::WindowManager::new(repository_manager));
-    window_manager.start();
+        let window_manager = window_manager::WindowManager::new(app, repository_manager);
+        unsafe {
+            app.set_data("metal-git-window-manager", window_manager.clone());
+        }
+        window_manager.start();
+    });
 
-    gtk::main();
+    app.run();
 }

@@ -11,12 +11,16 @@ macro_rules! dialog_when_error {
 }
 
 pub fn message_box_error(message: &str) {
-    let dialog = gtk::MessageDialog::new(None::<&gtk::Window>,
-                                         gtk::DialogFlags::empty(),
-                                         gtk::MessageType::Error,
-                                         gtk::ButtonsType::Ok,
-                                         message);
-    dialog.run();
+    let dialog = gtk::MessageDialog::builder()
+        .modal(true)
+        .message_type(gtk::MessageType::Error)
+        .buttons(gtk::ButtonsType::Ok)
+        .text(message)
+        .build();
+    dialog.connect_response(|dialog, _| {
+        dialog.close();
+    });
+    dialog.present();
 }
 
 pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
