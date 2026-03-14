@@ -13,6 +13,8 @@ use std::error;
 use git2::{Error, StatusOptions};
 use git2::build::CheckoutBuilder;
 
+use gtk::glib::Propagation;
+
 use crate::repository_manager::RepositoryManager;
 use crate::gtk_utils;
 use crate::repository_ext::RepositoryExt;
@@ -91,7 +93,7 @@ impl CommitWindow {
         let w = Rc::downgrade(&commit_window);
         commit_window.window.connect_delete_event(move |_, _| {
             w.upgrade().unwrap().hide();
-            Inhibit(true)
+            Propagation::Stop
         });
 
         let w = Rc::downgrade(&commit_window);
@@ -121,29 +123,29 @@ impl CommitWindow {
 
         let w = Rc::downgrade(&commit_window);
         commit_window.work_tree_files_tree_view
-                     .connect_row_activated(move |_tree_view, tree_path, _column| {
-                         let w_ = w.upgrade().unwrap();
-                         let file = Self::get_file_from_tree_path(&w_.work_tree_files_list_store,
-                                                                  tree_path);
+            .connect_row_activated(move |_tree_view, tree_path, _column| {
+                let w_ = w.upgrade().unwrap();
+                let file = Self::get_file_from_tree_path(&w_.work_tree_files_list_store,
+                                                         tree_path);
 
-                         if let Some(file) = file {
-                             dialog_when_error!("Failed to stage: {:?}",
+                if let Some(file) = file {
+                    dialog_when_error!("Failed to stage: {:?}",
                                                 w_.stage_files(vec![file]));
-                         }
-                     });
+                }
+            });
 
         let w = Rc::downgrade(&commit_window);
         commit_window.staged_files_tree_view
-                     .connect_row_activated(move |_tree_view, tree_path, _column| {
-                         let w_ = w.upgrade().unwrap();
-                         let file = Self::get_file_from_tree_path(&w_.staged_files_list_store,
-                                                                  tree_path);
+            .connect_row_activated(move |_tree_view, tree_path, _column| {
+                let w_ = w.upgrade().unwrap();
+                let file = Self::get_file_from_tree_path(&w_.staged_files_list_store,
+                                                         tree_path);
 
-                         if let Some(file) = file {
-                             dialog_when_error!("Failed to unstage: {:?}",
+                if let Some(file) = file {
+                    dialog_when_error!("Failed to unstage: {:?}",
                                                 w_.unstage_files(vec![file]));
-                         }
-                     });
+                }
+            });
 
         let w = Rc::downgrade(&commit_window);
         commit_window.revert_button.connect_clicked(move |_| {
@@ -172,10 +174,10 @@ impl CommitWindow {
                 if key.keyval().name().map(|n| n == "Return").unwrap_or(false) {
                     dialog_when_error!("Failed to commit: {:?}",
                                        w.upgrade().unwrap().commit_or_amend());
-                    return Inhibit(true);
+                    return Propagation::Stop;
                 }
             }
-            Inhibit(false)
+            Propagation::Proceed
         });
 
         let w = Rc::downgrade(&commit_window);
@@ -196,8 +198,8 @@ impl CommitWindow {
     fn get_selection_selected_files(selection: &gtk::TreeSelection) -> Vec<String> {
         let (tree_paths, model) = selection.selected_rows();
         return tree_paths.iter()
-                         .map(|path| Self::get_file_from_tree_path(&model, &path).unwrap())
-                         .collect();
+            .map(|path| Self::get_file_from_tree_path(&model, &path).unwrap())
+            .collect();
     }
 
     fn get_selection_selected_file_single(selection: &gtk::TreeSelection) -> Option<String> {
@@ -235,14 +237,14 @@ impl CommitWindow {
     }
 
     fn get_file_from_tree_path<T: gtk::traits::TreeModelExt>(list_store: &T,
-                                                     tree_path: &gtk::TreePath)
-                                                     -> Option<String> {
+                                                             tree_path: &gtk::TreePath)
+                                                             -> Option<String> {
         list_store.iter(tree_path)
-                  .and_then(|iter| {
-                      let value = list_store.value(&iter, FILENAME_COLUMN as i32);
-                      let s = value.get::<String>();
-                      s.ok()
-                  })
+            .and_then(|iter| {
+                let value = list_store.value(&iter, FILENAME_COLUMN as i32);
+                let s = value.get::<String>();
+                s.ok()
+            })
     }
 
     fn revert_button_clicked(&self) -> Result<(), Error> {
@@ -284,7 +286,7 @@ impl CommitWindow {
 
         for file_path in &remove_file_paths {
             let path = repo.get_full_path(file_path).unwrap();
-            
+
             // TODO: convert error
             if let Err(error) = fs::remove_file(&path) {
                 println!("Failed to remove {}: {}", path.to_string_lossy(), error);
@@ -382,7 +384,7 @@ impl CommitWindow {
     fn get_commit_message(&self) -> String {
         let buffer = self.message_text_view.buffer().unwrap();
         let message = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false)
-                            .unwrap();
+            .unwrap();
         message.to_string()
     }
 
@@ -549,7 +551,7 @@ impl CommitWindow {
         let repo = self.repository_manager.open()?;
 
         let path = repo.get_full_path(path_in_repository).unwrap();
-        
+
         let mut s = String::new();
         let mut f = File::open(path)?;
         f.read_to_string(&mut s)?;
