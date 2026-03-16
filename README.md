@@ -1,38 +1,42 @@
 # Metal Git
 
-# What's this?
+## What's this?
 
-GUI Git Frontend written in gtk-rs (gtk+ Rust wrapper) and git2-rs (libgit2 Rust wrapper).
+Metal Git is a GUI Git frontend written in Rust with `gtk4-rs` and `git2-rs`.
 
-# Caution
+The application opens the Git repository in the current working directory.
+
+## Caution
 
 This program is now in experimental stage. It may destroy your files or repositories, so use carefully.
 
-# How to build?
+## Build and run
 
-Install build dependencies at first. This program requires gtk+3 and libgit2.
+Install build dependencies first. This project requires GTK 4, libgit2, CMake, and `glib-compile-resources`.
 
-In Ubuntu 14.04 / 16.04, run this:
+Use a recent Rust toolchain, then run:
 
-```
-$ sudo apt install libgtk-3-dev libgit2-dev cmake
-```
-
-If build dependencies are properly installed, cargo should succeed.
-
-```
+```bash
 $ cargo run
 ```
 
-This program opens a git repository at the working directory.
+To build a release binary:
 
-If you want a binary, use cargo build.
-
-```
+```bash
 $ cargo build --release
 $ sudo cp target/release/metal-git /usr/local/bin
 ```
 
-# Author
+If `glib-compile-resources` is missing, install the GLib development tools package provided by your distribution.
+
+## Ubuntu packages
+
+On Ubuntu 22.04 or later:
+
+```bash
+$ sudo apt install libgtk-4-dev libgit2-dev libglib2.0-dev-bin cmake
+```
+
+## Author
 
 Yoichi Imai <sunnyone41@gmail.com>
