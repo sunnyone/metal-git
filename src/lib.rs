@@ -9,6 +9,7 @@ pub mod repository_manager;
 mod gtk_utils;
 
 mod station_renderer;
+mod station_wrapper;
 mod commit_window;
 mod history_window;
 mod window_manager;

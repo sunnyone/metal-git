@@ -2,12 +2,12 @@ use crate::commit_diff_panel::CommitDiffPanel;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
+use crate::station_wrapper::StationWrapper;
 use crate::window_manager::WindowManager;
 use git2::Error;
 use gtk::gdk;
 use gtk::glib::Propagation;
 use gtk::prelude::*;
-use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 pub struct HistoryWindow {
@@ -17,10 +17,9 @@ pub struct HistoryWindow {
     commit_diff_panel: Rc<CommitDiffPanel>,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
-    history_list_box: gtk::ListBox,
+    history_model: gtk::gio::ListStore,
+    history_selection: gtk::SingleSelection,
     commit_textview: gtk::TextView,
-    stations: Rc<RefCell<Vec<railway::RailwayStation>>>,
-    current_index: Rc<RefCell<Option<usize>>>,
 }
 
 impl HistoryWindow {
@@ -72,17 +71,24 @@ impl HistoryWindow {
         main_paned.set_shrink_end_child(true);
         root.append(&main_paned);
 
-        let history_list_box = gtk::ListBox::new();
-        history_list_box.set_selection_mode(gtk::SelectionMode::Single);
-        history_list_box.set_activate_on_single_click(true);
-        history_list_box.add_css_class("history-list");
+        let history_model = gtk::gio::ListStore::new::<StationWrapper>();
+        let history_selection = gtk::SingleSelection::new(Some(history_model.clone()));
+        history_selection.set_autoselect(false);
+        history_selection.set_can_unselect(true);
+
+        let history_factory = build_history_list_item_factory();
+        let history_list_view = gtk::ListView::new(
+            Some(history_selection.clone()),
+            Some(history_factory.clone()),
+        );
+        history_list_view.add_css_class("history-list");
 
         let history_scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .hexpand(true)
             .vexpand(true)
-            .child(&history_list_box)
+            .child(&history_list_view)
             .build();
 
         let history_header = build_history_header();
@@ -123,10 +129,9 @@ impl HistoryWindow {
             commit_diff_panel,
             commit_button,
             refresh_button,
-            history_list_box,
+            history_model,
+            history_selection,
             commit_textview,
-            stations: Rc::new(RefCell::new(Vec::new())),
-            current_index: Rc::new(RefCell::new(None)),
         });
 
         install_history_list_css();
@@ -146,41 +151,26 @@ impl HistoryWindow {
     }
 
     fn setup_history_list(self: &Rc<Self>) {
-        let stations = self.stations.clone();
         let repository_manager = self.repository_manager.clone();
         let commit_textview = self.commit_textview.clone();
         let commit_diff_panel = self.commit_diff_panel.clone();
-        let current_index = self.current_index.clone();
 
-        self.history_list_box.connect_row_selected(move |list_box, row| {
-            if row.is_none() {
+        self.history_selection.connect_selected_item_notify(move |selection| {
+            let Some(item) = selection.selected_item() else {
                 return;
-            }
+            };
+            let Ok(station_wrapper) = item.downcast::<StationWrapper>() else {
+                return;
+            };
+            let Some(station) = station_wrapper.get_station() else {
+                return;
+            };
 
-            update_from_selected_row(
-                list_box,
-                &stations,
+            let _ = update_selected_commit_widgets(
                 &repository_manager,
                 &commit_textview,
                 &commit_diff_panel,
-                &current_index,
-            );
-        });
-
-        let list_box = self.history_list_box.clone();
-        let stations = self.stations.clone();
-        let repository_manager = self.repository_manager.clone();
-        let commit_textview = self.commit_textview.clone();
-        let commit_diff_panel = self.commit_diff_panel.clone();
-        let current_index = self.current_index.clone();
-        self.history_list_box.connect_selected_rows_changed(move |_| {
-            update_from_selected_row(
-                &list_box,
-                &stations,
-                &repository_manager,
-                &commit_textview,
-                &commit_diff_panel,
-                &current_index,
+                &station,
             );
         });
     }
@@ -225,34 +215,19 @@ impl HistoryWindow {
     }
 
     fn load_history(&self) -> Result<(), Error> {
-        clear_list_box(&self.history_list_box);
+        self.history_selection.unselect_all();
+        self.history_model.remove_all();
 
         let stations = railway::collect_tree(&self.repository_manager)?;
-        self.stations.replace(stations);
-        self.current_index.replace(None);
 
-        for station in self.stations.borrow().iter() {
-            let station = station.clone();
-            let station_for_row = station.clone();
-            let repository_manager = self.repository_manager.clone();
-            let commit_textview = self.commit_textview.clone();
-            let commit_diff_panel = self.commit_diff_panel.clone();
-            self.history_list_box.append(&build_history_row(
-                &self.history_list_box,
-                &station_for_row,
-                move || {
-                    let _ = update_selected_commit_widgets(
-                        &repository_manager,
-                        &commit_textview,
-                        &commit_diff_panel,
-                        &station,
-                    );
-                },
-            ));
+        for station in stations {
+            let mut station_wrapper = StationWrapper::new();
+            station_wrapper.set_station(station);
+            self.history_model.append(&station_wrapper);
         }
 
-        if let Some(row) = self.history_list_box.row_at_index(0) {
-            self.history_list_box.select_row(Some(&row));
+        if self.history_model.n_items() > 0 {
+            self.history_selection.set_selected(0);
         } else {
             self.commit_textview.buffer().set_text("");
         }
@@ -297,54 +272,6 @@ fn update_selected_commit_widgets(
     Ok(())
 }
 
-fn update_selected_commit_by_index(
-    stations: &Rc<RefCell<Vec<railway::RailwayStation>>>,
-    repository_manager: &Rc<RepositoryManager>,
-    commit_textview: &gtk::TextView,
-    commit_diff_panel: &Rc<CommitDiffPanel>,
-    index: usize,
-) -> Result<(), git2::Error> {
-    let Some(station) = stations.borrow().get(index).cloned() else {
-        return Ok(());
-    };
-
-    update_selected_commit_widgets(
-        repository_manager,
-        commit_textview,
-        commit_diff_panel,
-        &station,
-    )
-}
-
-fn update_from_selected_row(
-    list_box: &gtk::ListBox,
-    stations: &Rc<RefCell<Vec<railway::RailwayStation>>>,
-    repository_manager: &Rc<RepositoryManager>,
-    commit_textview: &gtk::TextView,
-    commit_diff_panel: &Rc<CommitDiffPanel>,
-    current_index: &Rc<RefCell<Option<usize>>>,
-) {
-    let Some(row) = list_box.selected_row() else {
-        return;
-    };
-
-    let index = row.index();
-    if index >= 0 {
-        let index = index as usize;
-        if current_index.borrow().as_ref() == Some(&index) {
-            return;
-        }
-        current_index.replace(Some(index));
-        let _ = update_selected_commit_by_index(
-            stations,
-            repository_manager,
-            commit_textview,
-            commit_diff_panel,
-            index,
-        );
-    }
-}
-
 fn install_history_list_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(
@@ -384,12 +311,6 @@ fn install_history_list_css() {
     }
 }
 
-fn clear_list_box(list_box: &gtk::ListBox) {
-    while let Some(row) = list_box.row_at_index(0) {
-        list_box.remove(&row);
-    }
-}
-
 fn build_history_header() -> gtk::Box {
     let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -424,22 +345,37 @@ fn build_history_header() -> gtk::Box {
     header
 }
 
-fn build_history_row(
-    list_box: &gtk::ListBox,
-    station: &railway::RailwayStation,
-    on_pressed: impl Fn() + 'static,
-) -> gtk::ListBoxRow {
-    let row = gtk::ListBoxRow::new();
-    row.set_selectable(true);
-    row.set_activatable(true);
+fn build_history_list_item_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
 
+    factory.connect_bind(|_, list_item| {
+        let Some(item) = list_item.item() else {
+            return;
+        };
+        let Ok(station_wrapper) = item.downcast::<StationWrapper>() else {
+            return;
+        };
+        let Some(station) = station_wrapper.get_station() else {
+            return;
+        };
+
+        list_item.set_child(Some(&build_history_row_widget(&station)));
+    });
+
+    factory.connect_unbind(|_, list_item| {
+        list_item.set_child(None::<&gtk::Widget>);
+    });
+
+    factory
+}
+
+fn build_history_row_widget(station: &railway::RailwayStation) -> gtk::Box {
     let content_row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
         .margin_start(4)
         .margin_end(4)
         .build();
-    row.set_child(Some(&content_row));
 
     let graph = gtk::DrawingArea::builder()
         .content_width(station_renderer::desired_width(station))
@@ -487,18 +423,7 @@ fn build_history_row(
     time.add_css_class("dim-label");
     content.append(&time);
 
-    let gesture = gtk::GestureClick::new();
-    let row_weak = row.downgrade();
-    let list_box = list_box.clone();
-    gesture.connect_pressed(move |_, _, _, _| {
-        if let Some(row) = row_weak.upgrade() {
-            list_box.select_row(Some(&row));
-        }
-        on_pressed();
-    });
-    content_row.add_controller(gesture);
-
-    row
+    content_row
 }
 
 fn create_subject_markup(station: &railway::RailwayStation) -> String {
