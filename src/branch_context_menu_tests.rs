@@ -3,6 +3,9 @@ use git2::{BranchType, Commit, Repository, Signature};
 use std::cell::Cell;
 use tempdir::TempDir;
 
+#[path = "branch_context_menu_position_tests.rs"]
+mod position_tests;
+
 const SUBMENU_LINK_NAME: &str = "submenu";
 const CUSTOM_ATTRIBUTE_NAME: &str = "custom";
 
@@ -303,4 +306,26 @@ fn should_not_refresh_when_activated_action_fails() {
 
     assert_eq!(0, refresh_count.get());
     assert_eq!(1, error_count.get());
+}
+
+#[test]
+fn should_propagate_the_git_error_without_refreshing_failed_action() {
+    let refresh_count = Rc::new(Cell::new(0));
+    let received_error = Rc::new(Cell::new(None));
+    let refresh_count_for_action = Rc::clone(&refresh_count);
+    let received_error_for_action = Rc::clone(&received_error);
+    let group = create_action_group(
+        vec![candidate("missing", BranchKind::Local, false)],
+        RepositoryManager::new(),
+        Rc::new(move || refresh_count_for_action.set(refresh_count_for_action.get() + 1)),
+        Rc::new(move |error| received_error_for_action.set(Some(error.code()))),
+    );
+
+    group
+        .lookup_action(&format!("{SWITCH_ACTION_PREFIX}0"))
+        .unwrap()
+        .activate(None);
+
+    assert_eq!(0, refresh_count.get());
+    assert_eq!(Some(git2::ErrorCode::NotFound), received_error.get());
 }

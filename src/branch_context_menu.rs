@@ -64,10 +64,60 @@ fn show_menu(
     let popover = gtk::PopoverMenu::from_model(Some(&menu_model));
     install_empty_submenu_widget(&popover, &menu_model)?;
     popover.set_parent(widget);
-    popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+    position_context_menu(&popover, x, y);
     popover.connect_closed(|popover| popover.unparent());
     popover.popup();
+    align_context_menu_to_click(widget, &popover, x, y)?;
     Ok(())
+}
+
+fn position_context_menu(popover: &gtk::PopoverMenu, x: f64, y: f64) {
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Bottom);
+    popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32 + 1, 1, 1)));
+}
+
+fn align_context_menu_to_click(
+    widget: &gtk::Box,
+    popover: &gtk::PopoverMenu,
+    x: f64,
+    y: f64,
+) -> Result<(), Error> {
+    let (_, natural_width, _, _) = popover.measure(gtk::Orientation::Horizontal, -1);
+    let (_, natural_height, _, _) = popover.measure(gtk::Orientation::Vertical, natural_width);
+    let root = widget
+        .root()
+        .ok_or_else(|| Error::from_str("Context menu widget is not attached to a window"))?;
+    let click = widget
+        .compute_point(&root, &gtk::graphene::Point::new(x as f32, y as f32))
+        .ok_or_else(|| Error::from_str("Failed to locate context menu click in the window"))?;
+    let origin = widget
+        .compute_point(&root, &gtk::graphene::Point::zero())
+        .ok_or_else(|| Error::from_str("Failed to locate context menu widget in the window"))?;
+    let anchor_x = context_menu_anchor_x(
+        click.x(),
+        origin.x(),
+        root.width() as f32,
+        natural_width as f32,
+    );
+    let fits_below = click.y() + natural_height as f32 <= root.height() as f32;
+    let (position, anchor_y) = if fits_below {
+        (gtk::PositionType::Bottom, y as i32 + 1)
+    } else {
+        (gtk::PositionType::Top, y as i32)
+    };
+    popover.set_position(position);
+    popover.set_pointing_to(Some(&gdk::Rectangle::new(anchor_x, anchor_y, 1, 1)));
+    Ok(())
+}
+
+fn context_menu_anchor_x(click_x: f32, origin_x: f32, viewport_width: f32, menu_width: f32) -> i32 {
+    let menu_left = if click_x + menu_width <= viewport_width {
+        click_x
+    } else {
+        (click_x - menu_width).max(0.0)
+    };
+    (menu_left + menu_width / 2.0 - origin_x).round() as i32
 }
 
 fn create_menu_for_commit(

@@ -10,6 +10,7 @@ use super::test_repo::TestRepo;
 
 pub trait BranchTestRepo {
     fn branches_with_distinct_files() -> TestRepo;
+    fn branches_with_target_only_file() -> TestRepo;
     fn tip_oid(&self, branch_name: &str) -> Oid;
     fn create_local_branch(&self, branch_name: &str, target: Oid);
     fn create_remote_branch(&self, branch_name: &str, target: Oid);
@@ -28,6 +29,17 @@ impl BranchTestRepo for TestRepo {
         let repo = test_repo.repository_manager().open().unwrap();
         let base = commit_file(&repo, "master", "master\n", &[]);
         let _ = commit_file(&repo, "feature", "feature\n", &[&base]);
+        repo.set_head("refs/heads/master").unwrap();
+        repo.checkout_head(Some(CheckoutBuilder::new().force()))
+            .unwrap();
+        test_repo
+    }
+
+    fn branches_with_target_only_file() -> TestRepo {
+        let test_repo = TestRepo::empty();
+        let repo = test_repo.repository_manager().open().unwrap();
+        let base = commit_file(&repo, "master", "master\n", &[]);
+        let _ = commit_named_file(&repo, "feature", "incoming.txt", "feature file\n", &[&base]);
         repo.set_head("refs/heads/master").unwrap();
         repo.checkout_head(Some(CheckoutBuilder::new().force()))
             .unwrap();
@@ -127,9 +139,19 @@ fn commit_file<'repo, 'parents>(
     contents: &str,
     parents: &'parents [&'parents Commit],
 ) -> Commit<'repo> {
-    fs::write(repo.workdir().unwrap().join("state.txt"), contents).unwrap();
+    commit_named_file(repo, branch_name, "state.txt", contents, parents)
+}
+
+fn commit_named_file<'repo, 'parents>(
+    repo: &'repo Repository,
+    branch_name: &str,
+    filename: &str,
+    contents: &str,
+    parents: &'parents [&'parents Commit],
+) -> Commit<'repo> {
+    fs::write(repo.workdir().unwrap().join(filename), contents).unwrap();
     let mut index = repo.index().unwrap();
-    index.add_path(Path::new("state.txt")).unwrap();
+    index.add_path(Path::new(filename)).unwrap();
     index.write().unwrap();
     let tree_oid = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_oid).unwrap();

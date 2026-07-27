@@ -1,6 +1,9 @@
 use super::*;
+use git2::build::CheckoutBuilder;
 use git2::{Commit, Repository, Signature};
 use gtk::gio;
+use std::fs;
+use std::path::Path;
 use std::rc::Weak;
 use tempdir::TempDir;
 
@@ -14,6 +17,12 @@ struct HistoryWindowTestRepo {
     root: git2::Oid,
     middle: git2::Oid,
     tip: git2::Oid,
+}
+
+struct BranchSwitchFailureRepo {
+    _temp_dir: TempDir,
+    repository_manager: Rc<RepositoryManager>,
+    feature_tip: git2::Oid,
 }
 
 impl HistoryWindowTestRepo {
@@ -56,6 +65,50 @@ impl HistoryWindowTestRepo {
     }
 }
 
+impl BranchSwitchFailureRepo {
+    fn new() -> Self {
+        let temp_dir = TempDir::new("history-window-switch-failure").unwrap();
+        let repo = Repository::init(temp_dir.path()).unwrap();
+        let feature = commit_file(&repo, "feature", "feature\n", &[]);
+        repo.branch("feature", &feature, false).unwrap();
+        let master = commit_file(&repo, "master", "master\n", &[&feature]);
+        repo.reference(
+            "refs/heads/master",
+            master.id(),
+            true,
+            "set test master tip",
+        )
+        .unwrap();
+        repo.set_head("refs/heads/master").unwrap();
+        repo.checkout_head(Some(CheckoutBuilder::new().force()))
+            .unwrap();
+        fs::write(temp_dir.path().join("state.txt"), "local change\n").unwrap();
+
+        let repository_manager = RepositoryManager::new();
+        repository_manager.set_work_dir_path(temp_dir.path().to_str().unwrap());
+        Self {
+            _temp_dir: temp_dir,
+            repository_manager,
+            feature_tip: feature.id(),
+        }
+    }
+
+    fn head_name(&self) -> String {
+        self.repository_manager
+            .open()
+            .unwrap()
+            .head()
+            .unwrap()
+            .shorthand()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn state_contents(&self) -> String {
+        fs::read_to_string(self._temp_dir.path().join("state.txt")).unwrap()
+    }
+}
+
 fn commit(repo: &Repository, message: &str, parents: &[&Commit<'_>]) -> git2::Oid {
     let signature = Signature::now("test", "test@example.com").unwrap();
     let tree_oid = repo.treebuilder(None).unwrap().write().unwrap();
@@ -69,6 +122,36 @@ fn commit(repo: &Repository, message: &str, parents: &[&Commit<'_>]) -> git2::Oi
         parents,
     )
     .unwrap()
+}
+
+fn commit_file<'repo, 'parents>(
+    repo: &'repo Repository,
+    message: &str,
+    contents: &str,
+    parents: &'parents [&'parents Commit<'repo>],
+) -> Commit<'repo> {
+    fs::write(repo.workdir().unwrap().join("state.txt"), contents).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new("state.txt")).unwrap();
+    index.write().unwrap();
+    let tree_oid = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_oid).unwrap();
+    let signature = Signature::now("test", "test@example.com").unwrap();
+    let oid = repo
+        .commit(
+            if parents.is_empty() {
+                Some("refs/heads/master")
+            } else {
+                None
+            },
+            &signature,
+            &signature,
+            message,
+            &tree,
+            parents,
+        )
+        .unwrap();
+    repo.find_commit(oid).unwrap()
 }
 
 fn row_for_commit(history_window: &HistoryWindow, commit_id: git2::Oid) -> gtk::ListBoxRow {
@@ -166,9 +249,21 @@ fn action_for_label(menu: &gio::MenuModel, label: &str) -> String {
         .unwrap()
 }
 
-#[test]
+fn error_dialog_containing(expected: &str) -> gtk::MessageDialog {
+    gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|widget| widget.downcast::<gtk::MessageDialog>().ok())
+        .find(|dialog| {
+            dialog
+                .text()
+                .map(|text| text.contains(expected))
+                .unwrap_or(false)
+        })
+        .unwrap_or_else(|| panic!("error dialog did not contain: {expected}"))
+}
+
+#[gtk::test]
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
-    gtk::init().unwrap();
     let test_repo = HistoryWindowTestRepo::new();
     let app = gtk::Application::builder()
         .application_id("org.sunnyone.MetalGit.HistoryWindowTest")
@@ -248,4 +343,39 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
             .unwrap()
     );
     assert!(!menu_label(&popover, "feature_test").is_sensitive());
+}
+
+#[gtk::test]
+fn should_show_conflict_reason_and_keep_history_state_when_branch_switch_fails() {
+    let test_repo = BranchSwitchFailureRepo::new();
+    let app = gtk::Application::builder()
+        .application_id("org.sunnyone.MetalGit.HistoryWindowSwitchFailureTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let history_window = HistoryWindow::new(
+        &app,
+        Weak::<WindowManager>::new(),
+        Rc::clone(&test_repo.repository_manager),
+    );
+    history_window.refresh();
+    history_window.window.present();
+    while gtk::glib::MainContext::default().iteration(false) {}
+    let initial_title = history_window.window.title();
+    let feature_row = row_for_commit(&history_window, test_repo.feature_tip);
+    let (content, popover) = open_context_menu(&feature_row);
+    let action = action_for_label(&root_menu(&popover), "feature");
+
+    content.activate_action(&action, None).unwrap();
+    while gtk::glib::MainContext::default().iteration(false) {}
+
+    let dialog = error_dialog_containing("state.txt");
+    let message = dialog.text().unwrap();
+    assert!(message.contains("Failed to switch branch"));
+    assert!(message.contains("state.txt"));
+    assert_eq!("master", test_repo.head_name());
+    assert_eq!("local change\n", test_repo.state_contents());
+    assert_eq!(initial_title, history_window.window.title());
+    assert!(feature_row.parent().is_some());
+    dialog.close();
+    history_window.window.close();
 }

@@ -1,5 +1,5 @@
 use git2::build::CheckoutBuilder;
-use git2::{BranchType, Error, Oid, Repository};
+use git2::{BranchType, CheckoutNotificationType, Error, Oid, Repository, Tree};
 #[cfg(unix)]
 use std::ffi::OsStr;
 use std::fs;
@@ -44,8 +44,45 @@ pub fn switch_local_branch(repo: &Repository, branch_name: &str) -> Result<(), E
     let mut transaction = repo.transaction()?;
     transaction.lock_ref("HEAD")?;
     transaction.set_symbolic_target("HEAD", reference_name, None, "switch branch")?;
-    repo.checkout_tree(tree.as_object(), Some(CheckoutBuilder::new().safe()))?;
+    checkout_branch_tree(repo, &tree)?;
     transaction.commit()
+}
+
+fn checkout_branch_tree(repo: &Repository, tree: &Tree<'_>) -> Result<(), Error> {
+    let mut conflict_paths = Vec::new();
+    let checkout_result = {
+        let mut checkout = CheckoutBuilder::new();
+        checkout
+            .safe()
+            .notify_on(CheckoutNotificationType::CONFLICT)
+            .notify(|_, path, _, _, _| {
+                if let Some(path) = path {
+                    conflict_paths.push(path.to_owned());
+                }
+                true
+            });
+        repo.checkout_tree(tree.as_object(), Some(&mut checkout))
+    };
+
+    checkout_result.map_err(|error| checkout_error_with_paths(error, conflict_paths))
+}
+
+fn checkout_error_with_paths(error: Error, mut conflict_paths: Vec<PathBuf>) -> Error {
+    if conflict_paths.is_empty() {
+        return error;
+    }
+    conflict_paths.sort();
+    conflict_paths.dedup();
+    let paths = conflict_paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Error::new(
+        error.code(),
+        error.class(),
+        format!("{}; conflicting paths: {paths}", error.message()),
+    )
 }
 
 pub fn create_tracking_branch_and_switch(
