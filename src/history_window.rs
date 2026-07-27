@@ -1,3 +1,4 @@
+use crate::branch_context_menu;
 use crate::commit_diff_panel::CommitDiffPanel;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
@@ -195,7 +196,7 @@ impl HistoryWindow {
         });
     }
 
-    pub fn show(&self) {
+    pub fn show(self: &Rc<Self>) {
         self.refresh();
         self.window.present();
     }
@@ -224,7 +225,7 @@ impl HistoryWindow {
         Ok(())
     }
 
-    fn load_history(&self) -> Result<(), Error> {
+    fn load_history(self: &Rc<Self>) -> Result<(), Error> {
         clear_list_box(&self.history_list_box);
 
         let stations = railway::collect_tree(&self.repository_manager)?;
@@ -237,9 +238,11 @@ impl HistoryWindow {
             let repository_manager = self.repository_manager.clone();
             let commit_textview = self.commit_textview.clone();
             let commit_diff_panel = self.commit_diff_panel.clone();
+            let history_window = Rc::downgrade(self);
             self.history_list_box.append(&build_history_row(
                 &self.history_list_box,
                 &station_for_row,
+                self.repository_manager.clone(),
                 move || {
                     let _ = update_selected_commit_widgets(
                         &repository_manager,
@@ -247,6 +250,11 @@ impl HistoryWindow {
                         &commit_diff_panel,
                         &station,
                     );
+                },
+                move || {
+                    if let Some(history_window) = history_window.upgrade() {
+                        history_window.refresh();
+                    }
                 },
             ));
         }
@@ -260,7 +268,7 @@ impl HistoryWindow {
         Ok(())
     }
 
-    pub fn refresh(&self) {
+    pub fn refresh(self: &Rc<Self>) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
     }
@@ -269,7 +277,7 @@ impl HistoryWindow {
         self.window_manager.upgrade().unwrap().show_commit_window();
     }
 
-    fn refresh_button_clicked(&self) {
+    fn refresh_button_clicked(self: &Rc<Self>) {
         self.refresh();
     }
 }
@@ -427,7 +435,9 @@ fn build_history_header() -> gtk::Box {
 fn build_history_row(
     list_box: &gtk::ListBox,
     station: &railway::RailwayStation,
+    repository_manager: Rc<RepositoryManager>,
     on_pressed: impl Fn() + 'static,
+    on_branch_switched: impl Fn() + 'static,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
@@ -497,6 +507,12 @@ fn build_history_row(
         on_pressed();
     });
     content_row.add_controller(gesture);
+    branch_context_menu::install(
+        &content_row,
+        station.oid,
+        repository_manager,
+        on_branch_switched,
+    );
 
     row
 }
@@ -520,3 +536,7 @@ fn create_subject_markup(station: &railway::RailwayStation) -> String {
 
     markup
 }
+
+#[cfg(test)]
+#[path = "history_window_tests.rs"]
+mod tests;
