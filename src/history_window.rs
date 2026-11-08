@@ -1,4 +1,6 @@
 use crate::background_task::TaskRunner;
+use crate::branch::BranchCandidate;
+use crate::branch_context_menu::BranchContextMenu;
 use crate::commit_diff_panel::CommitDiffPanel;
 use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
@@ -7,6 +9,7 @@ use crate::pull_operation::PullOperation;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
+use crate::switch_branch_operation::SwitchBranchOperation;
 use crate::status_bar::StatusBar;
 use crate::window_manager::WindowManager;
 use git2::Error;
@@ -41,6 +44,7 @@ pub struct HistoryWindow {
     // Items are BoxedAnyObject(usize) row indexes into `graph`.
     history_store: gio::ListStore,
     history_selection: gtk::SingleSelection,
+    branch_context_menu: Rc<BranchContextMenu>,
     commit_textview: gtk::TextView,
     graph: Rc<RefCell<Rc<railway::RailwayGraph>>>,
     current_index: Rc<RefCell<Option<usize>>>,
@@ -154,24 +158,41 @@ impl HistoryWindow {
 
         let (status_sender, mut status_receiver) = long_running_operation::status_channel();
 
-        let history_window = Rc::new(HistoryWindow {
-            window,
-            window_manager,
-            repository_manager,
-            commit_diff_panel,
-            status_bar,
-            task_runner: TaskRunner::new(),
-            status_sender,
-            fetch_button,
-            pull_button,
-            commit_button,
-            refresh_button,
-            history_list_view,
-            history_store,
-            history_selection,
-            commit_textview,
-            graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
-            current_index: Rc::new(RefCell::new(None)),
+        let task_runner = TaskRunner::new();
+        let history_window = Rc::new_cyclic(|weak: &Weak<HistoryWindow>| {
+            let weak = weak.clone();
+            let busy_task_runner = task_runner.clone();
+            let branch_context_menu = BranchContextMenu::new(
+                &history_panel,
+                repository_manager.clone(),
+                move || busy_task_runner.is_running(),
+                move |candidate| {
+                    if let Some(history_window) = weak.upgrade() {
+                        history_window.switch_branch(candidate);
+                    }
+                },
+            );
+
+            HistoryWindow {
+                window,
+                window_manager,
+                repository_manager,
+                commit_diff_panel,
+                status_bar,
+                task_runner,
+                status_sender,
+                fetch_button,
+                pull_button,
+                commit_button,
+                refresh_button,
+                history_list_view,
+                history_store,
+                history_selection,
+                branch_context_menu,
+                commit_textview,
+                graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
+                current_index: Rc::new(RefCell::new(None)),
+            }
         });
 
         let task_runner = history_window.task_runner.clone();
@@ -214,9 +235,17 @@ impl HistoryWindow {
     fn setup_history_list(self: &Rc<Self>) {
         let factory = gtk::SignalListItemFactory::new();
 
+        let branch_context_menu = Rc::downgrade(&self.branch_context_menu);
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            list_item.set_child(Some(&HistoryRow::new()));
+            let row = HistoryRow::new();
+            if let Some(branch_context_menu) = branch_context_menu.upgrade() {
+                let row_weak = row.downgrade();
+                branch_context_menu.attach(&row, move || {
+                    row_weak.upgrade().and_then(|row| row.commit_id())
+                });
+            }
+            list_item.set_child(Some(&row));
         });
 
         let graph = self.graph.clone();
@@ -361,6 +390,16 @@ impl HistoryWindow {
             long_running_operation::start_operation(
                 &self.task_runner,
                 PullOperation { git_dir },
+                &self.status_sender,
+            );
+        }
+    }
+
+    fn switch_branch(&self, candidate: BranchCandidate) {
+        if let Some(git_dir) = self.git_dir() {
+            long_running_operation::start_operation(
+                &self.task_runner,
+                SwitchBranchOperation { git_dir, candidate },
                 &self.status_sender,
             );
         }
@@ -615,6 +654,10 @@ impl HistoryRow {
         glib::Object::new()
     }
 
+    fn commit_id(&self) -> Option<git2::Oid> {
+        self.imp().station.borrow().as_ref().map(|station| station.oid)
+    }
+
     fn bind(&self, station: Option<railway::RailwayStation>) {
         let imp = self.imp();
         match station.as_ref() {
@@ -656,3 +699,7 @@ fn create_subject_markup(ref_names: &[String], subject: &str) -> String {
 
     markup
 }
+
+#[cfg(test)]
+#[path = "history_window_tests.rs"]
+mod tests;

@@ -17,6 +17,7 @@ mod commit_diff_panel;
 mod status_bar;
 mod commit_diff_util;
 mod diff_text_view_util;
+mod branch_context_menu;
 
 mod repository_ext;
 mod static_resource;
