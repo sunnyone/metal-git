@@ -3,6 +3,7 @@ use crate::commit_diff_panel::CommitDiffPanel;
 use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
 use crate::long_running_operation::{self, LongRunningStatus, LongRunningStatusSender};
+use crate::pull_operation::PullOperation;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
@@ -17,6 +18,7 @@ use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
@@ -32,6 +34,7 @@ pub struct HistoryWindow {
     task_runner: Rc<TaskRunner>,
     status_sender: LongRunningStatusSender,
     fetch_button: gtk::Button,
+    pull_button: gtk::Button,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
     history_list_view: gtk::ListView,
@@ -77,6 +80,9 @@ impl HistoryWindow {
 
         let fetch_button = gtk_utils::icon_button("metal-git-fetch-symbolic", "Fetch");
         button_row.append(&fetch_button);
+
+        let pull_button = gtk_utils::icon_button("metal-git-pull-symbolic", "Pull");
+        button_row.append(&pull_button);
 
         let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
         button_row.append(&commit_button);
@@ -157,6 +163,7 @@ impl HistoryWindow {
             task_runner: TaskRunner::new(),
             status_sender,
             fetch_button,
+            pull_button,
             commit_button,
             refresh_button,
             history_list_view,
@@ -184,6 +191,11 @@ impl HistoryWindow {
         let w = Rc::downgrade(&history_window);
         history_window.fetch_button.connect_clicked(move |_| {
             w.upgrade().unwrap().fetch_button_clicked();
+        });
+
+        let w = Rc::downgrade(&history_window);
+        history_window.pull_button.connect_clicked(move |_| {
+            w.upgrade().unwrap().pull_button_clicked();
         });
 
         let w = Rc::downgrade(&history_window);
@@ -324,24 +336,39 @@ impl HistoryWindow {
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
 
-    fn fetch_button_clicked(&self) {
-        let git_dir = match self.repository_manager.open() {
-            Ok(repo) => repo.path().to_path_buf(),
+    fn git_dir(&self) -> Option<PathBuf> {
+        match self.repository_manager.open() {
+            Ok(repo) => Some(repo.path().to_path_buf()),
             Err(err) => {
                 gtk_utils::message_box_error(&format!("Failed to open repository: {}", err.message()));
-                return;
+                None
             }
-        };
+        }
+    }
 
-        long_running_operation::start_operation(
-            &self.task_runner,
-            FetchOperation { git_dir },
-            &self.status_sender,
-        );
+    fn fetch_button_clicked(&self) {
+        if let Some(git_dir) = self.git_dir() {
+            long_running_operation::start_operation(
+                &self.task_runner,
+                FetchOperation { git_dir },
+                &self.status_sender,
+            );
+        }
+    }
+
+    fn pull_button_clicked(&self) {
+        if let Some(git_dir) = self.git_dir() {
+            long_running_operation::start_operation(
+                &self.task_runner,
+                PullOperation { git_dir },
+                &self.status_sender,
+            );
+        }
     }
 
     fn on_status(&self, status: LongRunningStatus) {
         self.fetch_button.set_sensitive(!status.is_running());
+        self.pull_button.set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status
         if status.reload_history() {
             self.refresh();
