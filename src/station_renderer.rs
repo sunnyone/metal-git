@@ -5,6 +5,8 @@ use gtk::cairo::{Context, Error, LineCap};
 
 const TRACK_BOX_SIZE: i32 = 18;
 const ROW_HEIGHT: i32 = 28;
+// Keeps diagonal lines away from the row edge, where half of their width would be clipped.
+const ROW_EDGE_MARGIN: f64 = 2.0;
 
 fn commit_dot_radius(box_height: i32) -> i32 {
     (box_height as f64 / 5.0) as i32
@@ -28,6 +30,10 @@ fn box_x(index: usize) -> i32 {
     index as i32 * TRACK_BOX_SIZE
 }
 
+fn box_center_x(index: usize) -> f64 {
+    (box_x(index) + TRACK_BOX_SIZE / 2) as f64
+}
+
 pub fn desired_width_for_lanes(lane_count: usize) -> i32 {
     lane_count.max(1) as i32 * TRACK_BOX_SIZE + 12
 }
@@ -42,7 +48,6 @@ pub fn render(
     width: i32,
     height: i32,
 ) -> Result<(), Error> {
-    let box_width = TRACK_BOX_SIZE;
     let box_height = height.max(ROW_HEIGHT);
     let dot_radius = commit_dot_radius(box_height);
     let line_offset = merge_line_offset(box_height) as f64;
@@ -53,8 +58,7 @@ pub fn render(
     context.set_line_width(2.0);
 
     for track in &station.tracks {
-        let track_box_x = box_x(track.track_number.as_usize()) as f64;
-        let center_x = track_box_x + box_width as f64 / 2.0;
+        let center_x = box_center_x(track.track_number.as_usize());
         let center_y = height as f64 / 2.0;
 
         if !track.from_tracks.is_empty() {
@@ -63,10 +67,9 @@ pub fn render(
             context.stroke()?;
 
             for num in &track.from_tracks {
-                context.move_to(
-                    (box_x(num.as_usize()) + box_width / 2) as f64 + 1.0,
-                    0.0,
-                );
+                let from_x = box_center_x(num.as_usize());
+                context.move_to(from_x, 0.0);
+                context.line_to(from_x, ROW_EDGE_MARGIN);
                 context.line_to(center_x, line_offset);
                 context.stroke()?;
             }
@@ -79,10 +82,9 @@ pub fn render(
 
             for num in track.to_tracks.borrow().iter() {
                 context.move_to(center_x, bottom_y - line_offset);
-                context.line_to(
-                    (box_x(num.as_usize()) + box_width / 2) as f64 + 1.0,
-                    bottom_y,
-                );
+                let to_x = box_center_x(num.as_usize());
+                context.line_to(to_x, bottom_y - ROW_EDGE_MARGIN);
+                context.line_to(to_x, bottom_y);
                 context.stroke()?;
             }
         }
