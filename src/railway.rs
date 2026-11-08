@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cell::RefCell;
 
@@ -73,27 +73,17 @@ impl RailwayTrack {
 }
 
 impl RailwayStation {
-    fn new(commit: &git2::Commit,
-           ref_names: Vec<String>,
-           tracks: Vec<RailwayTrack>)
-           -> RailwayStation {
+    fn new(commit: &RailwayCommit, tracks: Vec<RailwayTrack>) -> RailwayStation {
         let active_track_index = tracks.iter().position(|x| x.is_active).unwrap();
-
-        let message = commit.message().unwrap_or("");
-        let mut message_lines = message.lines();
-        let first_line = message_lines.next().unwrap_or("");
-
-        let time = commit.time();
-        let commit_time = FixedOffset::east_opt(time.offset_minutes() * 60).unwrap().timestamp_opt(time.seconds(), 0).unwrap();
 
         RailwayStation {
             tracks: tracks,
             active_track_index: active_track_index,
-            oid: commit.id(),
-            subject: first_line.to_string(),
-            ref_names: ref_names,
-            author_name: commit.author().name().unwrap_or("").to_string(),
-            time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z"))
+            oid: commit.oid,
+            subject: commit.subject.clone(),
+            ref_names: commit.ref_names.clone(),
+            author_name: commit.author_name.clone(),
+            time: commit.time.clone(),
         }
     }
 
@@ -128,93 +118,213 @@ impl TrackNumber {
     }
 }
 
-struct TrackLineMap {
-    max_line_number: LineNumber,
-    oid_line_map: HashMap<Oid, LineNumber>,
-    line_track_map: HashMap<LineNumber, TrackNumber>,
+/// Commit information shown in a history row.
+#[derive(Clone, PartialEq)]
+pub struct RailwayCommit {
+    pub oid: Oid,
+    pub subject: String,
+    pub ref_names: Vec<String>,
+    pub author_name: String,
+    pub time: String,
 }
 
-impl TrackLineMap {
-    fn new() -> TrackLineMap {
-        TrackLineMap {
-            max_line_number: LineNumber(0),
-            oid_line_map: HashMap::new(),
-            line_track_map: HashMap::new(),
+impl RailwayCommit {
+    fn new(commit: &git2::Commit, ref_names: Vec<String>) -> RailwayCommit {
+        let message = commit.message().unwrap_or("");
+        let first_line = message.lines().next().unwrap_or("");
+
+        let time = commit.time();
+        let commit_time = FixedOffset::east_opt(time.offset_minutes() * 60).unwrap().timestamp_opt(time.seconds(), 0).unwrap();
+
+        RailwayCommit {
+            oid: commit.id(),
+            subject: first_line.to_string(),
+            ref_names: ref_names,
+            author_name: commit.author().name().unwrap_or("").to_string(),
+            time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z")),
         }
     }
+}
 
-    fn acquire_line_number(&mut self) -> LineNumber {
-        let line_number = self.max_line_number;
-        self.max_line_number.0 += 1;
-        line_number
+/// Rows between stored snapshots of the lines present in a row.
+const SNAPSHOT_INTERVAL: usize = 64;
+
+/// History graph stored as line intervals.
+///
+/// A line is a run of the graph drawn in one column. Line numbers only grow, and
+/// each line is present in one contiguous range of rows. Because new lines always
+/// take the rightmost track and tracks are compacted without reordering when a
+/// line ends, the track of a line in a row is its rank among the lines present in
+/// that row. Rows are therefore built on demand from the intervals instead of
+/// storing every track of every row.
+#[derive(Default)]
+pub struct RailwayGraph {
+    commits: Vec<RailwayCommit>,
+    /// Line the commit's dot is on.
+    active_lines: Vec<LineNumber>,
+    /// Lines the commit connects to below, in parent order. parent_line_offsets[i]
+    /// ..parent_line_offsets[i + 1] indexes parent_lines for row i.
+    parent_line_offsets: Vec<usize>,
+    parent_lines: Vec<LineNumber>,
+    /// Lines first present in row i are first_lines[i]..first_lines[i + 1].
+    first_lines: Vec<usize>,
+    /// Line that is present in row i for the last time, if any. Only the active
+    /// line of a row can end there.
+    ended_lines: Vec<Option<LineNumber>>,
+    lane_counts: Vec<usize>,
+    line_first_rows: Vec<usize>,
+    /// Sorted lines present in row k * SNAPSHOT_INTERVAL.
+    snapshots: Vec<Vec<LineNumber>>,
+}
+
+impl RailwayGraph {
+    pub fn len(&self) -> usize {
+        self.commits.len()
     }
 
-    fn is_oid_assigned(&self, oid: &Oid) -> bool {
-        self.oid_line_map.get(oid).is_some()
+    pub fn is_empty(&self) -> bool {
+        self.commits.is_empty()
     }
 
-    fn take_line_number_or_aquire(&mut self, oid: &Oid) -> LineNumber {
-        let line_number = match self.oid_line_map.remove(oid) {
-            Some(line_number) => line_number,
-            None => self.acquire_line_number(), // this require mut
+    pub fn commits(&self) -> &[RailwayCommit] {
+        &self.commits
+    }
+
+    pub fn commit(&self, index: usize) -> Option<&RailwayCommit> {
+        self.commits.get(index)
+    }
+
+    /// Number of tracks in a row.
+    pub fn lane_count(&self, index: usize) -> usize {
+        self.lane_counts.get(index).copied().unwrap_or(0)
+    }
+
+    /// Builds the tracks of a row.
+    pub fn station(&self, index: usize) -> Option<RailwayStation> {
+        let commit = self.commits.get(index)?;
+        let lines = self.lines_in_row(index);
+        let next_lines = if index + 1 < self.len() {
+            let mut next_lines = lines.clone();
+            self.advance_row(&mut next_lines, index + 1);
+            Some(next_lines)
+        } else {
+            None
         };
 
-        self.assign_track_number_if_required(&line_number);
+        let active_line = self.active_lines[index];
+        let parent_lines = &self.parent_lines[self.parent_line_offsets[index]..self.parent_line_offsets[index + 1]];
+        let tracks = lines
+            .iter()
+            .enumerate()
+            .map(|(track, line)| {
+                let track_number = TrackNumber(track);
+                let is_continued = self.line_first_rows[line.0] < index;
+                let from_tracks = if is_continued { vec![track_number] } else { Vec::new() };
+                let is_active = *line == active_line;
+                let to_lines = if is_active {
+                    parent_lines.to_vec()
+                } else if is_continued {
+                    vec![*line]
+                } else {
+                    Vec::new()
+                };
+                let mut railway_track = RailwayTrack::new(*line, track_number, is_active, from_tracks, Vec::new());
+                if let Some(next_lines) = next_lines.as_ref() {
+                    *railway_track.to_tracks.borrow_mut() = to_lines
+                        .iter()
+                        .map(|to_line| TrackNumber(next_lines.binary_search(to_line).expect("line continues to the next row")))
+                        .collect();
+                }
+                railway_track.to_lines = to_lines;
+                railway_track
+            })
+            .collect();
 
+        Some(RailwayStation::new(commit, tracks))
+    }
+
+    fn lines_in_row(&self, index: usize) -> Vec<LineNumber> {
+        let snapshot_row = index / SNAPSHOT_INTERVAL * SNAPSHOT_INTERVAL;
+        let mut lines = self.snapshots[index / SNAPSHOT_INTERVAL].clone();
+        for row in snapshot_row + 1..=index {
+            self.advance_row(&mut lines, row);
+        }
+        lines
+    }
+
+    /// Turns the lines present in row - 1 into the lines present in row.
+    fn advance_row(&self, lines: &mut Vec<LineNumber>, row: usize) {
+        if let Some(ended_line) = self.ended_lines[row - 1] {
+            if let Ok(position) = lines.binary_search(&ended_line) {
+                lines.remove(position);
+            }
+        }
+        lines.extend((self.first_lines[row]..self.first_lines[row + 1]).map(LineNumber));
+    }
+}
+
+/// Assigns lines to commits while walking the history.
+struct LineAssigner<'a> {
+    graph: &'a mut RailwayGraph,
+    oid_line_map: HashMap<Oid, LineNumber>,
+    present_lines: BTreeSet<LineNumber>,
+}
+
+impl<'a> LineAssigner<'a> {
+    fn take_line_number_or_acquire(&mut self, oid: &Oid, row: usize) -> LineNumber {
+        if let Some(line_number) = self.oid_line_map.remove(oid) {
+            return line_number;
+        }
+
+        let line_number = LineNumber(self.graph.line_first_rows.len());
+        self.graph.line_first_rows.push(row);
+        self.present_lines.insert(line_number);
         line_number
     }
 
-    fn set_next_oid(&mut self, line_number: LineNumber, oid: Oid) {
-        self.oid_line_map.insert(oid, line_number);
-    }
+    fn add_commit(&mut self, commit: &git2::Commit, ref_names: Vec<String>) {
+        let row = self.graph.commits.len();
+        let oid = commit.id();
+        self.graph.first_lines.push(self.graph.line_first_rows.len());
 
-    fn assign_track_number_if_required(&mut self, line_number: &LineNumber) {
-        if self.line_track_map.get(line_number).is_some() {
-            return;
+        let active_line_number = self.take_line_number_or_acquire(&oid, row);
+
+        let mut is_first_non_merge = true;
+        for parent_id in commit.parent_ids() {
+            let parent_line_number = if self.oid_line_map.contains_key(&parent_id) {
+                self.take_line_number_or_acquire(&parent_id, row)
+            } else if is_first_non_merge {
+                is_first_non_merge = false;
+                // first parent uses this active line
+                active_line_number
+            } else {
+                self.take_line_number_or_acquire(&parent_id, row)
+            };
+
+            self.oid_line_map.insert(parent_id, parent_line_number);
+            self.graph.parent_lines.push(parent_line_number);
         }
 
-        let track_number = self.line_track_map
-                               .values()
-                               .max()
-                               .map(|x| (*x).next_number())
-                               .unwrap_or_else(|| TrackNumber(0));
-        self.line_track_map.insert(*line_number, track_number);
-
-        return;
-    }
-
-    fn line_track_numbers(&self) -> Vec<(&LineNumber, &TrackNumber)> {
-        let mut line_track_vec = self.line_track_map.iter().collect::<Vec<_>>();
-        line_track_vec.sort_by(|a, b| a.1.cmp(b.1));
-
-        line_track_vec
-    }
-
-    fn convert_line_to_track(&self, line: &LineNumber) -> Option<TrackNumber> {
-        self.line_track_map.get(line).map(|x| *x)
-    }
-
-    fn vacuum_unused_track_numbers<'a, T>(&mut self, to_line_numbers: T)
-        where T: Iterator<Item = &'a LineNumber>
-    {
-        let to_lines = to_line_numbers.map(|x| *x).collect::<HashSet<_>>();
-        let all_lines = self.line_track_map.keys().map(|x| *x).collect::<HashSet<_>>();
-        let unused_lines = all_lines.difference(&to_lines).map(|x| x).collect::<Vec<_>>();
-
-        // TODO: performance improvement
-        for unused_line in &unused_lines {
-            let unused_track = *self.line_track_map.get(unused_line).unwrap();
-
-            for (_line, track) in self.line_track_map.iter_mut() {
-                if unused_track.0 < track.0 {
-                    *track = track.prev_number();
-                }
-            }
+        self.graph.active_lines.push(active_line_number);
+        self.graph.parent_line_offsets.push(self.graph.parent_lines.len());
+        self.graph.lane_counts.push(self.present_lines.len());
+        if row % SNAPSHOT_INTERVAL == 0 {
+            self.graph.snapshots.push(self.present_lines.iter().copied().collect());
         }
 
-        for unused_line in unused_lines {
-            self.line_track_map.remove(unused_line);
+        let parent_lines = &self.graph.parent_lines[self.graph.parent_line_offsets[row]..];
+        if parent_lines.contains(&active_line_number) {
+            self.graph.ended_lines.push(None);
+        } else {
+            self.present_lines.remove(&active_line_number);
+            self.graph.ended_lines.push(Some(active_line_number));
         }
+
+        self.graph.commits.push(RailwayCommit::new(commit, ref_names));
+    }
+
+    fn finish(self) {
+        self.graph.first_lines.push(self.graph.line_first_rows.len());
     }
 }
 
@@ -253,7 +363,7 @@ impl RefTable {
     }
 }
 
-pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<RailwayStation>, Error> {
+pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<RailwayGraph, Error> {
     let repo = repository_manager.open()?;
 
     let ref_table = RefTable::collect(&repo)?;
@@ -263,85 +373,21 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
     revwalk.set_sorting(git2::Sort::TIME)?;
     revwalk.push_head()?;
 
-    let mut track_line_map = TrackLineMap::new();
+    let mut graph = RailwayGraph::default();
+    graph.parent_line_offsets.push(0);
+    let mut assigner = LineAssigner {
+        graph: &mut graph,
+        oid_line_map: HashMap::new(),
+        present_lines: BTreeSet::new(),
+    };
 
-    let mut stations = Vec::<RailwayStation>::new();
     for oid in revwalk {
         let oid = oid?;
-        let mut prev_to_map = HashMap::new();
-        if let Some(last_station) = stations.last() {
-            track_line_map.vacuum_unused_track_numbers(last_station.tracks
-                                                                   .iter()
-                                                                   .flat_map(|x| &x.to_lines));
-
-            for track in &last_station.tracks {
-                let mut to_tracks = Vec::new();
-
-                for to_line in track.to_lines.iter() {
-                    let to_track = track_line_map.convert_line_to_track(&to_line).unwrap();
-
-                    prev_to_map.insert(*to_line, to_track);
-                    to_tracks.push(to_track);
-                }
-
-                *track.to_tracks.borrow_mut() = to_tracks;
-            }
-        }
-
-
         let commit = repo.find_commit(oid)?;
-        let active_line_number = track_line_map.take_line_number_or_aquire(&oid);
-
-        let mut is_first_non_merge = true;
-        let mut active_to_line_numbers = Vec::<LineNumber>::new();
-        for parent_id in commit.parent_ids() {
-            let parent_line_number = if track_line_map.is_oid_assigned(&parent_id) {
-                track_line_map.take_line_number_or_aquire(&parent_id)
-            } else if is_first_non_merge {
-                is_first_non_merge = false;
-                // first parent uses this active line
-                active_line_number
-            } else {
-                track_line_map.take_line_number_or_aquire(&parent_id)
-            };
-
-            track_line_map.set_next_oid(parent_line_number, parent_id);
-            active_to_line_numbers.push(parent_line_number);
-        }
-
-        let tracks = track_line_map.line_track_numbers()
-                                   .iter()
-                                   .map(|&(line_number, track_number)| {
-                                       let prev_to_track = prev_to_map.get(&line_number);
-                                       let mut from_lines = Vec::<LineNumber>::new();
-                                       let mut from_tracks = Vec::<TrackNumber>::new();
-                                       if let Some(prev_to_track) = prev_to_track {
-                                           from_lines.push(*line_number);
-                                           from_tracks.push(*prev_to_track);
-                                       }
-
-                                       if *line_number == active_line_number {
-                                           RailwayTrack::new(*line_number,
-                                                             *track_number,
-                                                             true,
-                                                             from_tracks,
-                                                             active_to_line_numbers.clone())
-                                       } else {
-                                           RailwayTrack::new(*line_number,
-                                                             *track_number,
-                                                             false,
-                                                             from_tracks.clone(),
-                                                             from_lines)
-                                       }
-                                   })
-                                   .collect::<Vec<_>>();
-
         let ref_names = ref_table.get_names_for_oid(&oid);
-        stations.push(RailwayStation::new(&commit, ref_names, tracks));
+        assigner.add_commit(&commit, ref_names);
     }
+    assigner.finish();
 
-    // 	for station in stations.iter() {
-    // 		println!("{}", station.dump_tracks());
-    // 	}
-    Ok(stations)
+    Ok(graph)
 }

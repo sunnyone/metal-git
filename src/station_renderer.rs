@@ -28,8 +28,8 @@ fn box_x(index: usize) -> i32 {
     index as i32 * TRACK_BOX_SIZE
 }
 
-pub fn desired_width(station: &railway::RailwayStation) -> i32 {
-    calc_tracks_width(station) + 12
+pub fn desired_width_for_lanes(lane_count: usize) -> i32 {
+    lane_count.max(1) as i32 * TRACK_BOX_SIZE + 12
 }
 
 pub fn desired_height() -> i32 {
