@@ -369,6 +369,7 @@ impl HistoryWindow {
     fn on_status(&self, status: LongRunningStatus) {
         self.fetch_button.set_sensitive(!status.is_running());
         self.pull_button.set_sensitive(!status.is_running());
+        self.commit_button.set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status
         if status.reload_history() {
             self.refresh();
