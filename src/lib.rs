@@ -22,6 +22,7 @@ mod static_resource;
 
 pub mod background_task;
 pub mod fetch_operation;
+pub mod pull_operation;
 pub mod long_running_operation;
 pub mod railway;
 pub mod remote_operation;

@@ -26,26 +26,31 @@ impl LongRunningOperation for FetchOperation {
             LongRunningEvent::Started => LongRunningStatus::Started {
                 message: "Fetching...".to_string(),
             },
-            LongRunningEvent::Progress(progress) => LongRunningStatus::Progress {
-                message: format!(
-                    "Fetching {}: {}/{} objects ({})",
-                    progress.remote_name,
-                    progress.received_objects,
-                    progress.total_objects,
-                    format_bytes(progress.received_bytes),
-                ),
-                fraction: if progress.total_objects > 0 {
-                    Some(progress.received_objects as f64 / progress.total_objects as f64)
-                } else {
-                    None
-                },
-            },
+            LongRunningEvent::Progress(progress) => describe_transfer("Fetching", progress),
             LongRunningEvent::Succeeded(summary) => LongRunningStatus::Succeeded {
                 message: describe_summary(summary),
                 reload_history: true,
             },
             other => describe_common(Self::NAME, other),
         }
+    }
+}
+
+pub(crate) fn describe_transfer(verb: &str, progress: &FetchProgress) -> LongRunningStatus {
+    LongRunningStatus::Progress {
+        message: format!(
+            "{} {}: {}/{} objects ({})",
+            verb,
+            progress.remote_name,
+            progress.received_objects,
+            progress.total_objects,
+            format_bytes(progress.received_bytes),
+        ),
+        fraction: if progress.total_objects > 0 {
+            Some(progress.received_objects as f64 / progress.total_objects as f64)
+        } else {
+            None
+        },
     }
 }
 
