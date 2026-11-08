@@ -17,15 +17,22 @@ mod commit_diff_util;
 mod diff_text_view_util;
 
 mod repository_ext;
+mod static_resource;
 
 pub mod railway;
 
 pub fn run_app() {
+    static_resource::init();
+
     let app = gtk::Application::builder()
         .application_id("org.sunnyone.MetalGit")
         .build();
 
     app.connect_activate(|app| {
+        if let Some(display) = gtk::gdk::Display::default() {
+            gtk::IconTheme::for_display(&display).add_resource_path("/org/sunnyone/MetalGit/icons");
+        }
+
         let repository_manager = repository_manager::RepositoryManager::new();
         repository_manager.set_work_dir_path(".");
 
