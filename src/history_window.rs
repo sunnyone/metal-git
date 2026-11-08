@@ -3,6 +3,7 @@ use crate::gtk_utils;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
+use crate::status_bar::StatusBar;
 use crate::window_manager::WindowManager;
 use git2::Error;
 use gtk::gdk;
@@ -18,6 +19,7 @@ pub struct HistoryWindow {
     window_manager: Weak<WindowManager>,
     repository_manager: Rc<RepositoryManager>,
     commit_diff_panel: Rc<CommitDiffPanel>,
+    status_bar: Rc<StatusBar>,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
     history_list_view: gtk::ListView,
@@ -127,11 +129,15 @@ impl HistoryWindow {
         let diff_widget = commit_diff_panel.widget();
         commit_notebook.append_page(&diff_widget, Some(&gtk::Label::new(Some("Diff"))));
 
+        let status_bar = StatusBar::new();
+        root.append(&status_bar.widget());
+
         let history_window = Rc::new(HistoryWindow {
             window,
             window_manager,
             repository_manager,
             commit_diff_panel,
+            status_bar,
             commit_button,
             refresh_button,
             history_list_view,
@@ -281,6 +287,7 @@ impl HistoryWindow {
     pub fn refresh(&self) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
+        self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
 
     fn commit_button_clicked(&self) {
