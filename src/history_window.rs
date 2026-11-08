@@ -19,7 +19,7 @@ pub struct HistoryWindow {
     refresh_button: gtk::Button,
     history_list_box: gtk::ListBox,
     commit_textview: gtk::TextView,
-    stations: Rc<RefCell<Vec<railway::RailwayStation>>>,
+    graph: Rc<RefCell<Rc<railway::RailwayGraph>>>,
     current_index: Rc<RefCell<Option<usize>>>,
 }
 
@@ -125,7 +125,7 @@ impl HistoryWindow {
             refresh_button,
             history_list_box,
             commit_textview,
-            stations: Rc::new(RefCell::new(Vec::new())),
+            graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
             current_index: Rc::new(RefCell::new(None)),
         });
 
@@ -146,7 +146,7 @@ impl HistoryWindow {
     }
 
     fn setup_history_list(self: &Rc<Self>) {
-        let stations = self.stations.clone();
+        let graph = self.graph.clone();
         let repository_manager = self.repository_manager.clone();
         let commit_textview = self.commit_textview.clone();
         let commit_diff_panel = self.commit_diff_panel.clone();
@@ -159,7 +159,7 @@ impl HistoryWindow {
 
             update_from_selected_row(
                 list_box,
-                &stations,
+                &graph,
                 &repository_manager,
                 &commit_textview,
                 &commit_diff_panel,
@@ -168,7 +168,7 @@ impl HistoryWindow {
         });
 
         let list_box = self.history_list_box.clone();
-        let stations = self.stations.clone();
+        let graph = self.graph.clone();
         let repository_manager = self.repository_manager.clone();
         let commit_textview = self.commit_textview.clone();
         let commit_diff_panel = self.commit_diff_panel.clone();
@@ -176,7 +176,7 @@ impl HistoryWindow {
         self.history_list_box.connect_selected_rows_changed(move |_| {
             update_from_selected_row(
                 &list_box,
-                &stations,
+                &graph,
                 &repository_manager,
                 &commit_textview,
                 &commit_diff_panel,
@@ -227,26 +227,29 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         clear_list_box(&self.history_list_box);
 
-        let stations = railway::collect_tree(&self.repository_manager)?;
-        self.stations.replace(stations);
+        let graph = railway::collect_tree(&self.repository_manager)?;
+        let graph = Rc::new(graph);
+        self.graph.replace(graph.clone());
         self.current_index.replace(None);
 
-        for station in self.stations.borrow().iter() {
-            let station = station.clone();
-            let station_for_row = station.clone();
+        for index in 0..graph.len() {
             let repository_manager = self.repository_manager.clone();
             let commit_textview = self.commit_textview.clone();
             let commit_diff_panel = self.commit_diff_panel.clone();
+            let graph_for_row = graph.clone();
             self.history_list_box.append(&build_history_row(
                 &self.history_list_box,
-                &station_for_row,
+                &graph,
+                index,
                 move || {
-                    let _ = update_selected_commit_widgets(
-                        &repository_manager,
-                        &commit_textview,
-                        &commit_diff_panel,
-                        &station,
-                    );
+                    if let Some(commit) = graph_for_row.commit(index) {
+                        let _ = update_selected_commit_widgets(
+                            &repository_manager,
+                            &commit_textview,
+                            &commit_diff_panel,
+                            commit,
+                        );
+                    }
                 },
             ));
         }
@@ -278,7 +281,7 @@ fn update_selected_commit_widgets(
     repository_manager: &Rc<RepositoryManager>,
     commit_textview: &gtk::TextView,
     commit_diff_panel: &Rc<CommitDiffPanel>,
-    station: &railway::RailwayStation,
+    station: &railway::RailwayCommit,
 ) -> Result<(), git2::Error> {
     let repo = repository_manager.open()?;
     let commit = repo.find_commit(station.oid)?;
@@ -298,13 +301,13 @@ fn update_selected_commit_widgets(
 }
 
 fn update_selected_commit_by_index(
-    stations: &Rc<RefCell<Vec<railway::RailwayStation>>>,
+    graph: &Rc<RefCell<Rc<railway::RailwayGraph>>>,
     repository_manager: &Rc<RepositoryManager>,
     commit_textview: &gtk::TextView,
     commit_diff_panel: &Rc<CommitDiffPanel>,
     index: usize,
 ) -> Result<(), git2::Error> {
-    let Some(station) = stations.borrow().get(index).cloned() else {
+    let Some(station) = graph.borrow().commit(index).cloned() else {
         return Ok(());
     };
 
@@ -318,7 +321,7 @@ fn update_selected_commit_by_index(
 
 fn update_from_selected_row(
     list_box: &gtk::ListBox,
-    stations: &Rc<RefCell<Vec<railway::RailwayStation>>>,
+    graph: &Rc<RefCell<Rc<railway::RailwayGraph>>>,
     repository_manager: &Rc<RepositoryManager>,
     commit_textview: &gtk::TextView,
     commit_diff_panel: &Rc<CommitDiffPanel>,
@@ -336,7 +339,7 @@ fn update_from_selected_row(
         }
         current_index.replace(Some(index));
         let _ = update_selected_commit_by_index(
-            stations,
+            graph,
             repository_manager,
             commit_textview,
             commit_diff_panel,
@@ -426,7 +429,8 @@ fn build_history_header() -> gtk::Box {
 
 fn build_history_row(
     list_box: &gtk::ListBox,
-    station: &railway::RailwayStation,
+    graph: &Rc<railway::RailwayGraph>,
+    index: usize,
     on_pressed: impl Fn() + 'static,
 ) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
@@ -441,17 +445,21 @@ fn build_history_row(
         .build();
     row.set_child(Some(&content_row));
 
-    let graph = gtk::DrawingArea::builder()
-        .content_width(station_renderer::desired_width(station))
+    let station = graph.commit(index).unwrap();
+    let graph_area = gtk::DrawingArea::builder()
+        .content_width(station_renderer::desired_width_for_lanes(graph.lane_count(index)))
         .content_height(station_renderer::desired_height())
         .halign(gtk::Align::Start)
         .valign(gtk::Align::Center)
         .build();
-    let station_for_draw = station.clone();
-    graph.set_draw_func(move |_, cr, width, height| {
-        let _ = station_renderer::render(&station_for_draw, cr, width, height);
+    // Tracks are built only when the row is drawn.
+    let graph_for_draw = graph.clone();
+    graph_area.set_draw_func(move |_, cr, width, height| {
+        if let Some(station) = graph_for_draw.station(index) {
+            let _ = station_renderer::render(&station, cr, width, height);
+        }
     });
-    content_row.append(&graph);
+    content_row.append(&graph_area);
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -501,7 +509,7 @@ fn build_history_row(
     row
 }
 
-fn create_subject_markup(station: &railway::RailwayStation) -> String {
+fn create_subject_markup(station: &railway::RailwayCommit) -> String {
     let mut markup = String::new();
 
     for ref_name in &station.ref_names {

@@ -10,7 +10,8 @@ use metal_git::railway;
 pub fn collect_tree_flat_two() {
     let test_repo = TestRepo::flat_two();
 
-    let stations = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let graph = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let stations = (0..graph.len()).map(|i| graph.station(i).unwrap()).collect::<Vec<_>>();
 
     println!("Stations:");
     for station in stations.iter() {
@@ -31,7 +32,8 @@ pub fn collect_tree_flat_two() {
 pub fn collect_tree_two_parent_two_child() {
     let test_repo = TestRepo::two_parent_two_child();
 
-    let stations = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let graph = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let stations = (0..graph.len()).map(|i| graph.station(i).unwrap()).collect::<Vec<_>>();
 
     println!("Stations:");
     for station in stations.iter() {
@@ -56,7 +58,8 @@ pub fn collect_tree_branch_merge_branch_merge() {
     let test_repo = TestRepo::branch_merge_branch_merge();
     // test_repo.set_debug();
 
-    let stations = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let graph = railway::collect_tree(&test_repo.repository_manager()).unwrap();
+    let stations = (0..graph.len()).map(|i| graph.station(i).unwrap()).collect::<Vec<_>>();
 
     println!("Stations:");
     for station in stations.iter() {

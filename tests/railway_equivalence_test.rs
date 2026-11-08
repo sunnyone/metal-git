@@ -128,8 +128,8 @@ fn reference_dumps(repo: &Repository) -> Vec<String> {
 }
 
 fn collect_tree_dumps(repository_manager: &RepositoryManager) -> Vec<String> {
-    let stations = railway::collect_tree(repository_manager).unwrap();
-    stations.iter().map(|station| station.dump_tracks()).collect()
+    let graph = railway::collect_tree(repository_manager).unwrap();
+    (0..graph.len()).map(|index| graph.station(index).unwrap().dump_tracks()).collect()
 }
 
 fn assert_same_layout(repository_manager: &RepositoryManager) {
