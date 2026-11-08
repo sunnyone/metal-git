@@ -1,8 +1,9 @@
+use crate::long_running_operation::LongRunningStatus;
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// A status bar showing a message, and the progress of a running task with a cancel button.
+/// A status bar showing a message, and the status of a long running operation with a cancel button.
 pub struct StatusBar {
     container: gtk::Box,
     message_label: gtk::Label,
@@ -67,29 +68,34 @@ impl StatusBar {
         self.message_label.set_text(message);
     }
 
-    /// Shows the progress bar. If `on_cancel` is given, a cancel button is also shown.
-    pub fn start_task(&self, message: &str, on_cancel: Option<Box<dyn Fn()>>) {
-        self.set_message(message);
-        self.progress_bar.set_fraction(0.0);
-        self.progress_bar.set_visible(true);
-        self.cancel_button.set_sensitive(true);
-        self.cancel_button.set_visible(on_cancel.is_some());
-        self.cancel_callback.replace(on_cancel);
+    /// `callback` runs when the cancel button is clicked.
+    pub fn connect_cancel<F: Fn() + 'static>(&self, callback: F) {
+        self.cancel_callback.replace(Some(Box::new(callback)));
     }
 
-    /// Updates the running task. `None` for `fraction` means the total is unknown.
-    pub fn update_task(&self, message: &str, fraction: Option<f64>) {
-        self.set_message(message);
-        match fraction {
-            Some(fraction) => self.progress_bar.set_fraction(fraction.clamp(0.0, 1.0)),
-            None => self.progress_bar.pulse(),
+    pub fn apply(&self, status: &LongRunningStatus) {
+        match status {
+            LongRunningStatus::Started { message } => {
+                self.set_message(message);
+                self.progress_bar.set_fraction(0.0);
+                self.progress_bar.set_visible(true);
+                self.cancel_button.set_sensitive(true);
+                self.cancel_button.set_visible(true);
+            }
+            LongRunningStatus::Progress { message, fraction } => {
+                self.set_message(message);
+                match fraction {
+                    Some(fraction) => self.progress_bar.set_fraction(fraction.clamp(0.0, 1.0)),
+                    None => self.progress_bar.pulse(),
+                }
+            }
+            LongRunningStatus::Succeeded { message, .. }
+            | LongRunningStatus::Cancelled { message }
+            | LongRunningStatus::Failed { message } => {
+                self.set_message(message);
+                self.progress_bar.set_visible(false);
+                self.cancel_button.set_visible(false);
+            }
         }
-    }
-
-    pub fn finish_task(&self, message: &str) {
-        self.set_message(message);
-        self.progress_bar.set_visible(false);
-        self.cancel_button.set_visible(false);
-        self.cancel_callback.replace(None);
     }
 }

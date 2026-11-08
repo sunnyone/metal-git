@@ -1,5 +1,8 @@
+use crate::background_task::TaskRunner;
 use crate::commit_diff_panel::CommitDiffPanel;
+use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
+use crate::long_running_operation::{self, LongRunningStatus, LongRunningStatusSender};
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
@@ -15,6 +18,10 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
+use std::time::Duration;
+
+// How long a closing window waits for a running task to clean up
+const TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub struct HistoryWindow {
     window: gtk::ApplicationWindow,
@@ -22,6 +29,9 @@ pub struct HistoryWindow {
     repository_manager: Rc<RepositoryManager>,
     commit_diff_panel: Rc<CommitDiffPanel>,
     status_bar: Rc<StatusBar>,
+    task_runner: Rc<TaskRunner>,
+    status_sender: LongRunningStatusSender,
+    fetch_button: gtk::Button,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
     history_list_view: gtk::ListView,
@@ -64,6 +74,9 @@ impl HistoryWindow {
 
         let button_row_spacer = gtk::Box::builder().hexpand(true).build();
         button_row.append(&button_row_spacer);
+
+        let fetch_button = gtk_utils::icon_button("metal-git-fetch-symbolic", "Fetch");
+        button_row.append(&fetch_button);
 
         let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
         button_row.append(&commit_button);
@@ -133,12 +146,17 @@ impl HistoryWindow {
         let status_bar = StatusBar::new();
         root.append(&status_bar.widget());
 
+        let (status_sender, mut status_receiver) = long_running_operation::status_channel();
+
         let history_window = Rc::new(HistoryWindow {
             window,
             window_manager,
             repository_manager,
             commit_diff_panel,
             status_bar,
+            task_runner: TaskRunner::new(),
+            status_sender,
+            fetch_button,
             commit_button,
             refresh_button,
             history_list_view,
@@ -149,8 +167,24 @@ impl HistoryWindow {
             current_index: Rc::new(RefCell::new(None)),
         });
 
+        let task_runner = history_window.task_runner.clone();
+        history_window.status_bar.connect_cancel(move || task_runner.cancel());
+
+        let w = Rc::downgrade(&history_window);
+        glib::spawn_future_local(async move {
+            while let Some(status) = status_receiver.next().await {
+                let Some(w) = w.upgrade() else { return };
+                w.on_status(status);
+            }
+        });
+
         install_history_list_css();
         history_window.setup_history_list();
+
+        let w = Rc::downgrade(&history_window);
+        history_window.fetch_button.connect_clicked(move |_| {
+            w.upgrade().unwrap().fetch_button_clicked();
+        });
 
         let w = Rc::downgrade(&history_window);
         history_window.commit_button.connect_clicked(move |_| {
@@ -215,9 +249,22 @@ impl HistoryWindow {
     where
         F: Fn() + 'static,
     {
-        self.window.connect_close_request(move |_| {
-            callback();
-            Propagation::Proceed
+        let callback = Rc::new(callback);
+        let task_runner = self.task_runner.clone();
+        self.window.connect_close_request(move |window| {
+            if !task_runner.is_running() {
+                callback();
+                return Propagation::Proceed;
+            }
+
+            window.set_visible(false);
+            let callback = callback.clone();
+            let task_runner = task_runner.clone();
+            glib::spawn_future_local(async move {
+                task_runner.shutdown(TASK_SHUTDOWN_TIMEOUT).await;
+                callback();
+            });
+            Propagation::Stop
         });
     }
 
@@ -275,6 +322,34 @@ impl HistoryWindow {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
+    }
+
+    fn fetch_button_clicked(&self) {
+        let git_dir = match self.repository_manager.open() {
+            Ok(repo) => repo.path().to_path_buf(),
+            Err(err) => {
+                gtk_utils::message_box_error(&format!("Failed to open repository: {}", err.message()));
+                return;
+            }
+        };
+
+        long_running_operation::start_operation(
+            &self.task_runner,
+            FetchOperation { git_dir },
+            &self.status_sender,
+        );
+    }
+
+    fn on_status(&self, status: LongRunningStatus) {
+        self.fetch_button.set_sensitive(!status.is_running());
+        // refresh shows its own message, so it must come before the status
+        if status.reload_history() {
+            self.refresh();
+        }
+        if let LongRunningStatus::Failed { message } = &status {
+            gtk_utils::message_box_error(message);
+        }
+        self.status_bar.apply(&status);
     }
 
     fn commit_button_clicked(&self) {

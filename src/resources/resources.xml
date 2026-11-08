@@ -5,5 +5,6 @@
     <file preprocess="xml-stripblanks">history_window.ui</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-commit-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-refresh-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-fetch-symbolic.svg</file>
   </gresource>
 </gresources>
