@@ -6,9 +6,11 @@ use crate::window_manager::WindowManager;
 use git2::Error;
 use gtk::gdk;
 use gtk::gio;
+use gtk::glib;
 use gtk::glib::BoxedAnyObject;
 use gtk::glib::Propagation;
 use gtk::prelude::*;
+use gtk::subclass::prelude::*;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
@@ -23,7 +25,6 @@ pub struct HistoryWindow {
     // Items are BoxedAnyObject(usize) row indexes into `graph`.
     history_store: gio::ListStore,
     history_selection: gtk::SingleSelection,
-    history_rows: Rc<RefCell<Vec<Rc<HistoryRow>>>>,
     commit_textview: gtk::TextView,
     graph: Rc<RefCell<Rc<railway::RailwayGraph>>>,
     current_index: Rc<RefCell<Option<usize>>>,
@@ -136,7 +137,6 @@ impl HistoryWindow {
             history_list_view,
             history_store,
             history_selection,
-            history_rows: Rc::new(RefCell::new(Vec::new())),
             commit_textview,
             graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
             current_index: Rc::new(RefCell::new(None)),
@@ -161,15 +161,11 @@ impl HistoryWindow {
     fn setup_history_list(self: &Rc<Self>) {
         let factory = gtk::SignalListItemFactory::new();
 
-        let rows = self.history_rows.clone();
         factory.connect_setup(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            let row = HistoryRow::new();
-            list_item.set_child(Some(&row.content));
-            rows.borrow_mut().push(row);
+            list_item.set_child(Some(&HistoryRow::new()));
         });
 
-        let rows = self.history_rows.clone();
         let graph = self.graph.clone();
         factory.connect_bind(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
@@ -177,24 +173,15 @@ impl HistoryWindow {
                 .item()
                 .and_downcast::<BoxedAnyObject>()
                 .and_then(|index| graph.borrow().station(*index.borrow::<usize>()));
-            if let Some(row) = find_history_row(&rows, list_item) {
+            if let Some(row) = list_item.child().and_downcast::<HistoryRow>() {
                 row.bind(station);
             }
         });
 
-        let rows = self.history_rows.clone();
         factory.connect_unbind(move |_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            if let Some(row) = find_history_row(&rows, list_item) {
+            if let Some(row) = list_item.child().and_downcast::<HistoryRow>() {
                 row.bind(None);
-            }
-        });
-
-        let rows = self.history_rows.clone();
-        factory.connect_teardown(move |_, list_item| {
-            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            if let Some(child) = list_item.child() {
-                rows.borrow_mut().retain(|row| row.content.upcast_ref::<gtk::Widget>() != &child);
             }
         });
 
@@ -433,111 +420,109 @@ fn build_history_header() -> gtk::Box {
     header
 }
 
-fn find_history_row(
-    rows: &Rc<RefCell<Vec<Rc<HistoryRow>>>>,
-    list_item: &gtk::ListItem,
-) -> Option<Rc<HistoryRow>> {
-    let child = list_item.child()?;
-    rows.borrow()
-        .iter()
-        .find(|row| row.content.upcast_ref::<gtk::Widget>() == &child)
-        .cloned()
+mod imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub struct HistoryRow {
+        pub graph: gtk::DrawingArea,
+        pub subject: gtk::Label,
+        pub author: gtk::Label,
+        pub time: gtk::Label,
+        pub station: Rc<RefCell<Option<railway::RailwayStation>>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for HistoryRow {
+        const NAME: &'static str = "MetalGitHistoryRow";
+        type Type = super::HistoryRow;
+        type ParentType = gtk::Box;
+    }
+
+    impl ObjectImpl for HistoryRow {
+        fn constructed(&self) {
+            self.parent_constructed();
+
+            let obj = self.obj();
+            obj.set_orientation(gtk::Orientation::Horizontal);
+            obj.set_spacing(8);
+            obj.set_margin_start(4);
+            obj.set_margin_end(4);
+
+            self.graph.set_content_height(station_renderer::desired_height());
+            self.graph.set_halign(gtk::Align::Start);
+            self.graph.set_valign(gtk::Align::Center);
+            let station_for_draw = self.station.clone();
+            self.graph.set_draw_func(move |_, cr, width, height| {
+                if let Some(station) = station_for_draw.borrow().as_ref() {
+                    let _ = station_renderer::render(station, cr, width, height);
+                }
+            });
+            obj.append(&self.graph);
+
+            let content = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .spacing(12)
+                .hexpand(true)
+                .valign(gtk::Align::Center)
+                .build();
+            obj.append(&content);
+
+            self.subject.set_xalign(0.0);
+            self.subject.set_hexpand(true);
+            self.subject.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            content.append(&self.subject);
+
+            self.author.set_xalign(0.0);
+            self.author.set_width_chars(16);
+            self.author.set_max_width_chars(24);
+            self.author.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            self.author.add_css_class("dim-label");
+            content.append(&self.author);
+
+            self.time.set_xalign(1.0);
+            self.time.set_width_chars(19);
+            self.time.add_css_class("dim-label");
+            content.append(&self.time);
+        }
+    }
+
+    impl WidgetImpl for HistoryRow {}
+    impl BoxImpl for HistoryRow {}
 }
 
-/// Widgets of one history row. ListView reuses them for whichever station is
-/// scrolled into view, so the station is replaced on every bind.
-struct HistoryRow {
-    content: gtk::Box,
-    graph: gtk::DrawingArea,
-    subject: gtk::Label,
-    author: gtk::Label,
-    time: gtk::Label,
-    station: Rc<RefCell<Option<railway::RailwayStation>>>,
+glib::wrapper! {
+    /// One history row. ListView reuses it for whichever station is scrolled
+    /// into view, so the station is replaced on every bind.
+    pub struct HistoryRow(ObjectSubclass<imp::HistoryRow>)
+        @extends gtk::Box, gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
 }
 
 impl HistoryRow {
-    fn new() -> Rc<HistoryRow> {
-        let station: Rc<RefCell<Option<railway::RailwayStation>>> = Rc::new(RefCell::new(None));
-
-        let content_row = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .margin_start(4)
-            .margin_end(4)
-            .build();
-
-        let graph = gtk::DrawingArea::builder()
-            .content_height(station_renderer::desired_height())
-            .halign(gtk::Align::Start)
-            .valign(gtk::Align::Center)
-            .build();
-        let station_for_draw = station.clone();
-        graph.set_draw_func(move |_, cr, width, height| {
-            if let Some(station) = station_for_draw.borrow().as_ref() {
-                let _ = station_renderer::render(station, cr, width, height);
-            }
-        });
-        content_row.append(&graph);
-
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .hexpand(true)
-            .valign(gtk::Align::Center)
-            .build();
-        content_row.append(&content);
-
-        let subject = gtk::Label::builder()
-            .xalign(0.0)
-            .hexpand(true)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        content.append(&subject);
-
-        let author = gtk::Label::builder()
-            .xalign(0.0)
-            .width_chars(16)
-            .max_width_chars(24)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        author.add_css_class("dim-label");
-        content.append(&author);
-
-        let time = gtk::Label::builder()
-            .xalign(1.0)
-            .width_chars(19)
-            .build();
-        time.add_css_class("dim-label");
-        content.append(&time);
-
-        Rc::new(HistoryRow {
-            content: content_row,
-            graph,
-            subject,
-            author,
-            time,
-            station,
-        })
+    fn new() -> HistoryRow {
+        glib::Object::new()
     }
 
     fn bind(&self, station: Option<railway::RailwayStation>) {
+        let imp = self.imp();
         match station.as_ref() {
             Some(station) => {
-                self.graph
+                imp.graph
                     .set_content_width(station_renderer::desired_width_for_lanes(station.tracks.len()));
-                self.subject
+                imp.subject
                     .set_markup(&create_subject_markup(&station.ref_names, &station.subject));
-                self.author.set_label(&station.author_name);
-                self.time.set_label(&station.time);
+                imp.author.set_label(&station.author_name);
+                imp.time.set_label(&station.time);
             }
             None => {
-                self.subject.set_label("");
-                self.author.set_label("");
-                self.time.set_label("");
+                imp.subject.set_label("");
+                imp.author.set_label("");
+                imp.time.set_label("");
             }
         }
-        self.station.replace(station);
-        self.graph.queue_draw();
+        imp.station.replace(station);
+        imp.graph.queue_draw();
     }
 }
 
