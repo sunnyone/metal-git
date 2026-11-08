@@ -63,7 +63,7 @@ pub fn print_diff_to_text_view(diff: &Diff, buffer: &TextBuffer) {
         }
         str.push_str(str::from_utf8(line.content()).unwrap());
 
-        gtk_utils::text_buffer_insert_with_tag_by_name(&buffer, &mut iter, &str, tag_name);
+        gtk_utils::text_buffer_insert_with_tag_by_name(buffer, &mut iter, &str, tag_name);
         true
     });
 }

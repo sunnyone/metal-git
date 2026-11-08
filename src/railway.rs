@@ -37,11 +37,11 @@ impl RailwayTrack {
            to_lines: Vec<LineNumber>)
            -> RailwayTrack {
         RailwayTrack {
-            line_number: line_number,
-            track_number: track_number,
-            is_active: is_active,
-            from_tracks: from_tracks,
-            to_lines: to_lines,
+            line_number,
+            track_number,
+            is_active,
+            from_tracks,
+            to_lines,
             to_tracks: RefCell::new(Vec::new()),
         }
     }
@@ -77,8 +77,8 @@ impl RailwayStation {
         let active_track_index = tracks.iter().position(|x| x.is_active).unwrap();
 
         RailwayStation {
-            tracks: tracks,
-            active_track_index: active_track_index,
+            tracks,
+            active_track_index,
             oid: commit.oid,
             subject: commit.subject.clone(),
             ref_names: commit.ref_names.clone(),
@@ -139,7 +139,7 @@ impl RailwayCommit {
         RailwayCommit {
             oid: commit.id(),
             subject: first_line.to_string(),
-            ref_names: ref_names,
+            ref_names,
             author_name: commit.author().name().unwrap_or("").to_string(),
             time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z")),
         }
@@ -308,7 +308,7 @@ impl<'a> LineAssigner<'a> {
         self.graph.active_lines.push(active_line_number);
         self.graph.parent_line_offsets.push(self.graph.parent_lines.len());
         self.graph.lane_counts.push(self.present_lines.len());
-        if row % SNAPSHOT_INTERVAL == 0 {
+        if row.is_multiple_of(SNAPSHOT_INTERVAL) {
             self.graph.snapshots.push(self.present_lines.iter().copied().collect());
         }
 
@@ -357,9 +357,8 @@ impl RefTable {
 
     fn get_names_for_oid(&self, oid: &Oid) -> Vec<String> {
         self.oid_table
-            .get(oid)
-            .map(|x| x.clone())
-            .unwrap_or_else(|| Vec::new())
+            .get(oid).cloned()
+            .unwrap_or_else(Vec::new)
     }
 }
 

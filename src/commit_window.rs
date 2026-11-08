@@ -552,7 +552,7 @@ impl CommitWindow {
                 &signature,
                 &signature,
                 &message,
-                &tree,
+                tree,
                 &[head_commit],
             )?;
         } else {
@@ -562,7 +562,7 @@ impl CommitWindow {
                 Some(&signature),
                 None,
                 Some(&message),
-                Some(&tree),
+                Some(tree),
             )?;
         }
 
@@ -654,7 +654,7 @@ impl CommitWindow {
         let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
         let head_tree = head_tree_object.as_tree().unwrap();
 
-        let diff = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts))?;
+        let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
         self.show_diff(&diff);
 
         Ok(())
