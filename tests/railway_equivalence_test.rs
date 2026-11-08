@@ -25,7 +25,7 @@ fn reference_dumps(repo: &Repository) -> Vec<String> {
     }
 
     let mut revwalk = repo.revwalk().unwrap();
-    revwalk.set_sorting(Sort::TIME).unwrap();
+    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME).unwrap();
     revwalk.push_head().unwrap();
 
     let mut max_line = 0;
@@ -128,7 +128,7 @@ fn reference_dumps(repo: &Repository) -> Vec<String> {
 }
 
 fn collect_tree_dumps(repository_manager: &RepositoryManager) -> Vec<String> {
-    let graph = railway::collect_tree(repository_manager).unwrap();
+    let graph = railway::collect_tree(repository_manager, railway::HistoryScope::CurrentBranch).unwrap();
     (0..graph.len()).map(|index| graph.station(index).unwrap().dump_tracks()).collect()
 }
 

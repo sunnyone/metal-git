@@ -1,3 +1,4 @@
+use crate::app_settings;
 use crate::background_task::TaskRunner;
 use crate::branch::BranchCandidate;
 use crate::branch_context_menu::BranchContextMenu;
@@ -6,7 +7,7 @@ use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
 use crate::long_running_operation::{self, LongRunningStatus, LongRunningStatusSender};
 use crate::pull_operation::PullOperation;
-use crate::railway;
+use crate::railway::{self, HistoryScope};
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
 use crate::switch_branch_operation::SwitchBranchOperation;
@@ -40,6 +41,7 @@ pub struct HistoryWindow {
     pull_button: gtk::Button,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
+    history_scope_dropdown: gtk::DropDown,
     history_list_view: gtk::ListView,
     // Items are BoxedAnyObject(usize) row indexes into `graph`.
     history_store: gio::ListStore,
@@ -78,6 +80,13 @@ impl HistoryWindow {
             .spacing(8)
             .build();
         root.append(&button_row);
+
+        let history_scope_dropdown = gtk::DropDown::from_strings(&HISTORY_SCOPE_LABELS);
+        history_scope_dropdown.set_tooltip_text(Some("Choose which commits the history shows"));
+        history_scope_dropdown.set_selected(history_scope_index(app_settings::load_history_scope(
+            &app_settings::history_scope_path(),
+        )));
+        button_row.append(&history_scope_dropdown);
 
         let button_row_spacer = gtk::Box::builder().hexpand(true).build();
         button_row.append(&button_row_spacer);
@@ -185,6 +194,7 @@ impl HistoryWindow {
                 pull_button,
                 commit_button,
                 refresh_button,
+                history_scope_dropdown,
                 history_list_view,
                 history_store,
                 history_selection,
@@ -208,6 +218,11 @@ impl HistoryWindow {
 
         install_history_list_css();
         history_window.setup_history_list();
+
+        let w = Rc::downgrade(&history_window);
+        history_window.history_scope_dropdown.connect_selected_notify(move |_| {
+            w.upgrade().unwrap().history_scope_changed();
+        });
 
         let w = Rc::downgrade(&history_window);
         history_window.fetch_button.connect_clicked(move |_| {
@@ -341,7 +356,7 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         self.history_store.remove_all();
 
-        let graph = railway::collect_tree(&self.repository_manager)?;
+        let graph = railway::collect_tree(&self.repository_manager, self.history_scope())?;
         self.graph.replace(Rc::new(graph));
         self.current_index.replace(None);
 
@@ -393,6 +408,17 @@ impl HistoryWindow {
                 &self.status_sender,
             );
         }
+    }
+
+    fn history_scope(&self) -> HistoryScope {
+        history_scope_from_index(self.history_scope_dropdown.selected())
+    }
+
+    fn history_scope_changed(&self) {
+        if let Err(err) = app_settings::save_history_scope(&app_settings::history_scope_path(), self.history_scope()) {
+            eprintln!("Failed to save the history scope: {}", err);
+        }
+        self.refresh();
     }
 
     fn switch_branch(&self, candidate: BranchCandidate) {
@@ -665,7 +691,7 @@ impl HistoryRow {
                 imp.graph
                     .set_content_width(station_renderer::desired_width_for_lanes(station.tracks.len()));
                 imp.subject
-                    .set_markup(&create_subject_markup(&station.ref_names, &station.subject));
+                    .set_markup(&create_subject_markup(&station.ref_names, station.head_ref_name.as_deref(), &station.subject));
                 imp.author.set_label(&station.author_name);
                 imp.time.set_label(&station.time);
             }
@@ -680,12 +706,34 @@ impl HistoryRow {
     }
 }
 
-fn create_subject_markup(ref_names: &[String], subject: &str) -> String {
+const HISTORY_SCOPE_LABELS: [&str; 2] = ["All Branches", "Current Branch"];
+
+fn history_scope_index(scope: HistoryScope) -> u32 {
+    match scope {
+        HistoryScope::AllBranches => 0,
+        HistoryScope::CurrentBranch => 1,
+    }
+}
+
+fn history_scope_from_index(index: u32) -> HistoryScope {
+    match index {
+        1 => HistoryScope::CurrentBranch,
+        _ => HistoryScope::AllBranches,
+    }
+}
+
+fn create_subject_markup(ref_names: &[String], head_ref_name: Option<&str>, subject: &str) -> String {
     let mut markup = String::new();
 
     for ref_name in ref_names {
+        let attributes = if head_ref_name == Some(ref_name.as_str()) {
+            "foreground=\"#ffffff\" background=\"#a00000\""
+        } else {
+            "foreground=\"#a00000\""
+        };
         let tag = format!(
-            "<span foreground=\"#a00000\"><b>[{}]</b></span>",
+            "<span {}><b>[{}]</b></span>",
+            attributes,
             gtk::glib::markup_escape_text(ref_name)
         );
         markup.push_str(&tag);
