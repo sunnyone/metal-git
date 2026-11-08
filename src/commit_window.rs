@@ -513,7 +513,7 @@ impl CommitWindow {
         let head_object = head_ref.peel(git2::ObjectType::Commit)?;
         let head_commit = head_object.as_commit().unwrap();
 
-        if let Some(message) = head_commit.message() {
+        if let Ok(message) = head_commit.message() {
             self.set_commit_message(message);
         }
 
@@ -721,7 +721,7 @@ fn collect_changed_status_items(
     let mut status_items: Vec<StatusItem> = Vec::new();
 
     for status in statuses.iter() {
-        let Some(path) = status.path() else {
+        let Ok(path) = status.path() else {
             return Err(Error::from_str("Invalid file path exist"));
         };
 

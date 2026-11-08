@@ -290,7 +290,7 @@ impl HistoryWindow {
 
         let mut title = String::new();
         if let Ok(reference) = repo.head() {
-            if let Some(head_shorthand) = reference.shorthand() {
+            if let Ok(head_shorthand) = reference.shorthand() {
                 title.push('[');
                 title.push_str(head_shorthand);
                 title.push_str("] ");
@@ -606,7 +606,7 @@ glib::wrapper! {
     /// into view, so the station is replaced on every bind.
     pub struct HistoryRow(ObjectSubclass<imp::HistoryRow>)
         @extends gtk::Box, gtk::Widget,
-        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
+        @implements gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
 }
 
 impl HistoryRow {

@@ -32,7 +32,7 @@ where
 {
     let mut summary = FetchSummary::default();
 
-    let remote_names: Vec<String> = repo.remotes()?.iter().flatten().map(String::from).collect();
+    let remote_names: Vec<String> = repo.remotes()?.iter().flatten().flatten().map(String::from).collect();
     for remote_name in remote_names {
         let (received_objects, received_bytes) = fetch_remote(repo, &remote_name, cancelled, &mut on_progress)?;
         summary.received_objects += received_objects;
@@ -57,8 +57,8 @@ where
     if !head.is_branch() {
         return Err(Error::from_str("HEAD is not on a branch"));
     }
-    let branch_ref = head.name().ok_or_else(|| Error::from_str("Invalid branch name"))?.to_string();
-    let branch_name = head.shorthand().ok_or_else(|| Error::from_str("Invalid branch name"))?.to_string();
+    let branch_ref = head.name()?.to_string();
+    let branch_name = head.shorthand()?.to_string();
     let branch = Branch::wrap(head);
 
     let no_upstream = || Error::from_str(&format!("Branch {} has no upstream", branch_name));
@@ -67,7 +67,7 @@ where
     drop(upstream);
 
     let remote_name = repo.branch_upstream_remote(&branch_ref).map_err(|_| no_upstream())?;
-    let remote_name = remote_name.as_str().ok_or_else(no_upstream)?.to_string();
+    let remote_name = remote_name.as_str().map_err(|_| no_upstream())?.to_string();
     fetch_remote(repo, &remote_name, cancelled, &mut on_progress)?;
 
     if cancelled.load(Ordering::SeqCst) {

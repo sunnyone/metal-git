@@ -8,8 +8,8 @@ edition = "2021"
 name = "metal_git"
 
 [dependencies]
-git2 = "^0.18"
-gtk = { package = "gtk4", version = "0.9" }
+git2 = { version = "0.21", features = ["cred", "https", "ssh"] }
+gtk = { package = "gtk4", version = "0.11" }
 chrono = "*"
 futures = "0.3"
 
