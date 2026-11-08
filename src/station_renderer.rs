@@ -5,6 +5,8 @@ use gtk::cairo::{Context, Error, LineCap};
 
 const TRACK_BOX_SIZE: i32 = 18;
 const ROW_HEIGHT: i32 = 28;
+// Keeps diagonal lines away from the row edge, where half of their width would be clipped.
+const ROW_EDGE_MARGIN: f64 = 2.0;
 
 fn commit_dot_radius(box_height: i32) -> i32 {
     (box_height as f64 / 5.0) as i32
@@ -65,7 +67,9 @@ pub fn render(
             context.stroke()?;
 
             for num in &track.from_tracks {
-                context.move_to(box_center_x(num.as_usize()), 0.0);
+                let from_x = box_center_x(num.as_usize());
+                context.move_to(from_x, 0.0);
+                context.line_to(from_x, ROW_EDGE_MARGIN);
                 context.line_to(center_x, line_offset);
                 context.stroke()?;
             }
@@ -78,7 +82,9 @@ pub fn render(
 
             for num in track.to_tracks.borrow().iter() {
                 context.move_to(center_x, bottom_y - line_offset);
-                context.line_to(box_center_x(num.as_usize()), bottom_y);
+                let to_x = box_center_x(num.as_usize());
+                context.line_to(to_x, bottom_y - ROW_EDGE_MARGIN);
+                context.line_to(to_x, bottom_y);
                 context.stroke()?;
             }
         }
