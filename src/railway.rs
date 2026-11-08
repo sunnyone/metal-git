@@ -7,6 +7,13 @@ use chrono::*;
 use git2::{Error, Oid};
 use crate::repository_manager::RepositoryManager;
 
+/// Which commits the history shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryScope {
+    AllBranches,
+    CurrentBranch,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct RailwayTrack {
     pub line_number: LineNumber,
@@ -364,7 +371,7 @@ impl RefTable {
     }
 }
 
-pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<RailwayGraph, Error> {
+pub fn collect_tree(repository_manager: &RepositoryManager, scope: HistoryScope) -> Result<RailwayGraph, Error> {
     let repo = repository_manager.open()?;
 
     let ref_table = RefTable::collect(&repo)?;
@@ -374,6 +381,11 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<RailwayGra
     // Commit times alone can put a parent above a child that has the same time
     revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
     revwalk.push_head()?;
+    if scope == HistoryScope::AllBranches {
+        revwalk.push_glob("refs/heads/*")?;
+        revwalk.push_glob("refs/remotes/*")?;
+        revwalk.push_glob("refs/tags/*")?;
+    }
 
     let mut graph = RailwayGraph::default();
     graph.parent_line_offsets.push(0);

@@ -341,7 +341,7 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         self.history_store.remove_all();
 
-        let graph = railway::collect_tree(&self.repository_manager)?;
+        let graph = railway::collect_tree(&self.repository_manager, railway::HistoryScope::CurrentBranch)?;
         self.graph.replace(Rc::new(graph));
         self.current_index.replace(None);
 
