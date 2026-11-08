@@ -25,7 +25,7 @@ fn reference_dumps(repo: &Repository) -> Vec<String> {
     }
 
     let mut revwalk = repo.revwalk().unwrap();
-    revwalk.set_sorting(Sort::TIME).unwrap();
+    revwalk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME).unwrap();
     revwalk.push_head().unwrap();
 
     let mut max_line = 0;

@@ -369,7 +369,8 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<RailwayGra
 
     let mut revwalk = repo.revwalk()?;
 
-    revwalk.set_sorting(git2::Sort::TIME)?;
+    // Commit times alone can put a parent above a child that has the same time
+    revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
     revwalk.push_head()?;
 
     let mut graph = RailwayGraph::default();
