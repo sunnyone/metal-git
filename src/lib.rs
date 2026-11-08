@@ -21,6 +21,7 @@ mod repository_ext;
 mod static_resource;
 
 pub mod railway;
+pub mod remote_operation;
 
 pub fn run_app() {
     static_resource::init();
