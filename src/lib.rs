@@ -20,6 +20,7 @@ mod diff_text_view_util;
 mod repository_ext;
 mod static_resource;
 
+pub mod background_task;
 pub mod railway;
 pub mod remote_operation;
 
