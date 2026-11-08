@@ -5,6 +5,8 @@ use crate::station_renderer;
 use crate::window_manager::WindowManager;
 use git2::Error;
 use gtk::gdk;
+use gtk::gio;
+use gtk::glib::BoxedAnyObject;
 use gtk::glib::Propagation;
 use gtk::prelude::*;
 use std::cell::RefCell;
@@ -17,7 +19,11 @@ pub struct HistoryWindow {
     commit_diff_panel: Rc<CommitDiffPanel>,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
-    history_list_box: gtk::ListBox,
+    history_list_view: gtk::ListView,
+    // Items are BoxedAnyObject(usize) row indexes into `graph`.
+    history_store: gio::ListStore,
+    history_selection: gtk::SingleSelection,
+    history_rows: Rc<RefCell<Vec<Rc<HistoryRow>>>>,
     commit_textview: gtk::TextView,
     graph: Rc<RefCell<Rc<railway::RailwayGraph>>>,
     current_index: Rc<RefCell<Option<usize>>>,
@@ -72,17 +78,21 @@ impl HistoryWindow {
         main_paned.set_shrink_end_child(true);
         root.append(&main_paned);
 
-        let history_list_box = gtk::ListBox::new();
-        history_list_box.set_selection_mode(gtk::SelectionMode::Single);
-        history_list_box.set_activate_on_single_click(true);
-        history_list_box.add_css_class("history-list");
+        // ListView only creates widgets for the visible rows, so startup time
+        // does not grow with the number of commits.
+        let history_store = gio::ListStore::new::<BoxedAnyObject>();
+        let history_selection = gtk::SingleSelection::new(Some(history_store.clone()));
+        history_selection.set_autoselect(false);
+        let history_list_view =
+            gtk::ListView::new(Some(history_selection.clone()), None::<gtk::ListItemFactory>);
+        history_list_view.add_css_class("history-list");
 
         let history_scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .hexpand(true)
             .vexpand(true)
-            .child(&history_list_box)
+            .child(&history_list_view)
             .build();
 
         let history_header = build_history_header();
@@ -123,7 +133,10 @@ impl HistoryWindow {
             commit_diff_panel,
             commit_button,
             refresh_button,
-            history_list_box,
+            history_list_view,
+            history_store,
+            history_selection,
+            history_rows: Rc::new(RefCell::new(Vec::new())),
             commit_textview,
             graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
             current_index: Rc::new(RefCell::new(None)),
@@ -146,36 +159,55 @@ impl HistoryWindow {
     }
 
     fn setup_history_list(self: &Rc<Self>) {
-        let graph = self.graph.clone();
-        let repository_manager = self.repository_manager.clone();
-        let commit_textview = self.commit_textview.clone();
-        let commit_diff_panel = self.commit_diff_panel.clone();
-        let current_index = self.current_index.clone();
+        let factory = gtk::SignalListItemFactory::new();
 
-        self.history_list_box.connect_row_selected(move |list_box, row| {
-            if row.is_none() {
-                return;
-            }
-
-            update_from_selected_row(
-                list_box,
-                &graph,
-                &repository_manager,
-                &commit_textview,
-                &commit_diff_panel,
-                &current_index,
-            );
+        let rows = self.history_rows.clone();
+        factory.connect_setup(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let row = HistoryRow::new();
+            list_item.set_child(Some(&row.content));
+            rows.borrow_mut().push(row);
         });
 
-        let list_box = self.history_list_box.clone();
+        let rows = self.history_rows.clone();
+        let graph = self.graph.clone();
+        factory.connect_bind(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let station = list_item
+                .item()
+                .and_downcast::<BoxedAnyObject>()
+                .and_then(|index| graph.borrow().station(*index.borrow::<usize>()));
+            if let Some(row) = find_history_row(&rows, list_item) {
+                row.bind(station);
+            }
+        });
+
+        let rows = self.history_rows.clone();
+        factory.connect_unbind(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            if let Some(row) = find_history_row(&rows, list_item) {
+                row.bind(None);
+            }
+        });
+
+        let rows = self.history_rows.clone();
+        factory.connect_teardown(move |_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            if let Some(child) = list_item.child() {
+                rows.borrow_mut().retain(|row| row.content.upcast_ref::<gtk::Widget>() != &child);
+            }
+        });
+
+        self.history_list_view.set_factory(Some(&factory));
+
         let graph = self.graph.clone();
         let repository_manager = self.repository_manager.clone();
         let commit_textview = self.commit_textview.clone();
         let commit_diff_panel = self.commit_diff_panel.clone();
         let current_index = self.current_index.clone();
-        self.history_list_box.connect_selected_rows_changed(move |_| {
-            update_from_selected_row(
-                &list_box,
+        self.history_selection.connect_selected_notify(move |selection| {
+            update_from_selection(
+                selection,
                 &graph,
                 &repository_manager,
                 &commit_textview,
@@ -225,37 +257,19 @@ impl HistoryWindow {
     }
 
     fn load_history(&self) -> Result<(), Error> {
-        clear_list_box(&self.history_list_box);
+        self.history_store.remove_all();
 
         let graph = railway::collect_tree(&self.repository_manager)?;
-        let graph = Rc::new(graph);
-        self.graph.replace(graph.clone());
+        self.graph.replace(Rc::new(graph));
         self.current_index.replace(None);
 
-        for index in 0..graph.len() {
-            let repository_manager = self.repository_manager.clone();
-            let commit_textview = self.commit_textview.clone();
-            let commit_diff_panel = self.commit_diff_panel.clone();
-            let graph_for_row = graph.clone();
-            self.history_list_box.append(&build_history_row(
-                &self.history_list_box,
-                &graph,
-                index,
-                move || {
-                    if let Some(commit) = graph_for_row.commit(index) {
-                        let _ = update_selected_commit_widgets(
-                            &repository_manager,
-                            &commit_textview,
-                            &commit_diff_panel,
-                            commit,
-                        );
-                    }
-                },
-            ));
-        }
+        let items = (0..self.graph.borrow().len())
+            .map(BoxedAnyObject::new)
+            .collect::<Vec<_>>();
+        self.history_store.splice(0, 0, &items);
 
-        if let Some(row) = self.history_list_box.row_at_index(0) {
-            self.history_list_box.select_row(Some(&row));
+        if self.history_store.n_items() > 0 {
+            self.history_selection.set_selected(0);
         } else {
             self.commit_textview.buffer().set_text("");
         }
@@ -319,33 +333,31 @@ fn update_selected_commit_by_index(
     )
 }
 
-fn update_from_selected_row(
-    list_box: &gtk::ListBox,
+fn update_from_selection(
+    selection: &gtk::SingleSelection,
     graph: &Rc<RefCell<Rc<railway::RailwayGraph>>>,
     repository_manager: &Rc<RepositoryManager>,
     commit_textview: &gtk::TextView,
     commit_diff_panel: &Rc<CommitDiffPanel>,
     current_index: &Rc<RefCell<Option<usize>>>,
 ) {
-    let Some(row) = list_box.selected_row() else {
+    let selected = selection.selected();
+    if selected == gtk::INVALID_LIST_POSITION {
         return;
-    };
-
-    let index = row.index();
-    if index >= 0 {
-        let index = index as usize;
-        if current_index.borrow().as_ref() == Some(&index) {
-            return;
-        }
-        current_index.replace(Some(index));
-        let _ = update_selected_commit_by_index(
-            graph,
-            repository_manager,
-            commit_textview,
-            commit_diff_panel,
-            index,
-        );
     }
+
+    let index = selected as usize;
+    if current_index.borrow().as_ref() == Some(&index) {
+        return;
+    }
+    current_index.replace(Some(index));
+    let _ = update_selected_commit_by_index(
+        graph,
+        repository_manager,
+        commit_textview,
+        commit_diff_panel,
+        index,
+    );
 }
 
 fn install_history_list_css() {
@@ -387,12 +399,6 @@ fn install_history_list_css() {
     }
 }
 
-fn clear_list_box(list_box: &gtk::ListBox) {
-    while let Some(row) = list_box.row_at_index(0) {
-        list_box.remove(&row);
-    }
-}
-
 fn build_history_header() -> gtk::Box {
     let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -427,92 +433,118 @@ fn build_history_header() -> gtk::Box {
     header
 }
 
-fn build_history_row(
-    list_box: &gtk::ListBox,
-    graph: &Rc<railway::RailwayGraph>,
-    index: usize,
-    on_pressed: impl Fn() + 'static,
-) -> gtk::ListBoxRow {
-    let row = gtk::ListBoxRow::new();
-    row.set_selectable(true);
-    row.set_activatable(true);
-
-    let content_row = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
-        .margin_start(4)
-        .margin_end(4)
-        .build();
-    row.set_child(Some(&content_row));
-
-    let station = graph.commit(index).unwrap();
-    let graph_area = gtk::DrawingArea::builder()
-        .content_width(station_renderer::desired_width_for_lanes(graph.lane_count(index)))
-        .content_height(station_renderer::desired_height())
-        .halign(gtk::Align::Start)
-        .valign(gtk::Align::Center)
-        .build();
-    // Tracks are built only when the row is drawn.
-    let graph_for_draw = graph.clone();
-    graph_area.set_draw_func(move |_, cr, width, height| {
-        if let Some(station) = graph_for_draw.station(index) {
-            let _ = station_renderer::render(&station, cr, width, height);
-        }
-    });
-    content_row.append(&graph_area);
-
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
-        .hexpand(true)
-        .valign(gtk::Align::Center)
-        .build();
-    content_row.append(&content);
-
-    let subject = gtk::Label::builder()
-        .xalign(0.0)
-        .hexpand(true)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .build();
-    subject.set_markup(&create_subject_markup(station));
-    content.append(&subject);
-
-    let meta = gtk::Label::builder()
-        .label(&station.author_name)
-        .xalign(0.0)
-        .width_chars(16)
-        .max_width_chars(24)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .build();
-    meta.add_css_class("dim-label");
-    content.append(&meta);
-
-    let time = gtk::Label::builder()
-        .label(&station.time)
-        .xalign(1.0)
-        .width_chars(19)
-        .build();
-    time.add_css_class("dim-label");
-    content.append(&time);
-
-    let gesture = gtk::GestureClick::new();
-    let row_weak = row.downgrade();
-    let list_box = list_box.clone();
-    gesture.connect_pressed(move |_, _, _, _| {
-        if let Some(row) = row_weak.upgrade() {
-            list_box.select_row(Some(&row));
-        }
-        on_pressed();
-    });
-    content_row.add_controller(gesture);
-
-    row
+fn find_history_row(
+    rows: &Rc<RefCell<Vec<Rc<HistoryRow>>>>,
+    list_item: &gtk::ListItem,
+) -> Option<Rc<HistoryRow>> {
+    let child = list_item.child()?;
+    rows.borrow()
+        .iter()
+        .find(|row| row.content.upcast_ref::<gtk::Widget>() == &child)
+        .cloned()
 }
 
-fn create_subject_markup(station: &railway::RailwayCommit) -> String {
+/// Widgets of one history row. ListView reuses them for whichever station is
+/// scrolled into view, so the station is replaced on every bind.
+struct HistoryRow {
+    content: gtk::Box,
+    graph: gtk::DrawingArea,
+    subject: gtk::Label,
+    author: gtk::Label,
+    time: gtk::Label,
+    station: Rc<RefCell<Option<railway::RailwayStation>>>,
+}
+
+impl HistoryRow {
+    fn new() -> Rc<HistoryRow> {
+        let station: Rc<RefCell<Option<railway::RailwayStation>>> = Rc::new(RefCell::new(None));
+
+        let content_row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .margin_start(4)
+            .margin_end(4)
+            .build();
+
+        let graph = gtk::DrawingArea::builder()
+            .content_height(station_renderer::desired_height())
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .build();
+        let station_for_draw = station.clone();
+        graph.set_draw_func(move |_, cr, width, height| {
+            if let Some(station) = station_for_draw.borrow().as_ref() {
+                let _ = station_renderer::render(station, cr, width, height);
+            }
+        });
+        content_row.append(&graph);
+
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .hexpand(true)
+            .valign(gtk::Align::Center)
+            .build();
+        content_row.append(&content);
+
+        let subject = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        content.append(&subject);
+
+        let author = gtk::Label::builder()
+            .xalign(0.0)
+            .width_chars(16)
+            .max_width_chars(24)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        author.add_css_class("dim-label");
+        content.append(&author);
+
+        let time = gtk::Label::builder()
+            .xalign(1.0)
+            .width_chars(19)
+            .build();
+        time.add_css_class("dim-label");
+        content.append(&time);
+
+        Rc::new(HistoryRow {
+            content: content_row,
+            graph,
+            subject,
+            author,
+            time,
+            station,
+        })
+    }
+
+    fn bind(&self, station: Option<railway::RailwayStation>) {
+        match station.as_ref() {
+            Some(station) => {
+                self.graph
+                    .set_content_width(station_renderer::desired_width_for_lanes(station.tracks.len()));
+                self.subject
+                    .set_markup(&create_subject_markup(&station.ref_names, &station.subject));
+                self.author.set_label(&station.author_name);
+                self.time.set_label(&station.time);
+            }
+            None => {
+                self.subject.set_label("");
+                self.author.set_label("");
+                self.time.set_label("");
+            }
+        }
+        self.station.replace(station);
+        self.graph.queue_draw();
+    }
+}
+
+fn create_subject_markup(ref_names: &[String], subject: &str) -> String {
     let mut markup = String::new();
 
-    for ref_name in &station.ref_names {
+    for ref_name in ref_names {
         let tag = format!(
             "<span foreground=\"#a00000\"><b>[{}]</b></span>",
             gtk::glib::markup_escape_text(ref_name)
@@ -524,7 +556,7 @@ fn create_subject_markup(station: &railway::RailwayCommit) -> String {
         markup.push(' ');
     }
 
-    markup.push_str(&gtk::glib::markup_escape_text(&station.subject));
+    markup.push_str(&gtk::glib::markup_escape_text(subject));
 
     markup
 }
