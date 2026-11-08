@@ -13,6 +13,7 @@ mod commit_window;
 mod history_window;
 mod window_manager;
 mod commit_diff_panel;
+mod status_bar;
 mod commit_diff_util;
 mod diff_text_view_util;
 
