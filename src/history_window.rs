@@ -1,4 +1,5 @@
 use crate::commit_diff_panel::CommitDiffPanel;
+use crate::gtk_utils;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
@@ -61,10 +62,10 @@ impl HistoryWindow {
         let button_row_spacer = gtk::Box::builder().hexpand(true).build();
         button_row.append(&button_row_spacer);
 
-        let commit_button = gtk::Button::with_label("Commit");
+        let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
         button_row.append(&commit_button);
 
-        let refresh_button = gtk::Button::with_label("Refresh");
+        let refresh_button = gtk_utils::icon_button("metal-git-refresh-symbolic", "Refresh");
         button_row.append(&refresh_button);
 
         let main_paned = gtk::Paned::builder()

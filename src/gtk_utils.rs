@@ -23,6 +23,20 @@ pub fn message_box_error(message: &str) {
     dialog.present();
 }
 
+pub fn icon_button(icon_name: &str, label: &str) -> gtk::Button {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    content.append(&gtk::Image::from_icon_name(icon_name));
+    content.append(&gtk::Label::new(Some(label)));
+
+    gtk::Button::builder()
+        .child(&content)
+        .tooltip_text(label)
+        .build()
+}
+
 pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
                                            iter: &mut gtk::TextIter,
                                            text: &str,
