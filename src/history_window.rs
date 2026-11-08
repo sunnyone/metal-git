@@ -3,6 +3,7 @@ use crate::commit_diff_panel::CommitDiffPanel;
 use crate::railway;
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
+use crate::startup_log::{self, Span};
 use crate::window_manager::WindowManager;
 use git2::Error;
 use gtk::gdk;
@@ -198,7 +199,34 @@ impl HistoryWindow {
 
     pub fn show(self: &Rc<Self>) {
         self.refresh();
-        self.window.present();
+        if startup_log::enabled() {
+            let count = self.stations.borrow().len();
+            let frame_wait = Rc::new(RefCell::new(Some(Span::new(
+                "ui.wait_first_history_frame",
+            ))));
+            let map_handler = Rc::new(RefCell::new(None));
+            let map_handler_for_callback = map_handler.clone();
+            *map_handler.borrow_mut() = Some(self.history_list_box.connect_map(move |list| {
+                // Mapping happens before layout/paint. Wait for the end of that
+                // frame, rather than treating present() or map as visible.
+                if let Some(clock) = list.frame_clock() {
+                    let handler = Rc::new(RefCell::new(None));
+                    let handler_for_callback = handler.clone();
+                    let frame_wait = frame_wait.clone();
+                    *handler.borrow_mut() = Some(clock.connect_after_paint(move |clock| {
+                        drop(frame_wait.borrow_mut().take());
+                        startup_log::finish(count);
+                        if let Some(handler) = handler_for_callback.borrow_mut().take() {
+                            clock.disconnect(handler);
+                        }
+                    }));
+                }
+                if let Some(handler) = map_handler_for_callback.borrow_mut().take() {
+                    list.disconnect(handler);
+                }
+            }));
+        }
+        startup_log::measure("ui.present", || self.window.present());
     }
 
     fn load_title(&self) -> Result<(), Error> {
@@ -226,13 +254,19 @@ impl HistoryWindow {
     }
 
     fn load_history(self: &Rc<Self>) -> Result<(), Error> {
-        clear_list_box(&self.history_list_box);
+        startup_log::measure("history.clear_rows", || {
+            clear_list_box(&self.history_list_box)
+        });
 
-        let stations = railway::collect_tree(&self.repository_manager)?;
+        let stations = startup_log::measure_result("history.collect_tree", || {
+            railway::collect_tree(&self.repository_manager)
+        })?;
         self.stations.replace(stations);
         self.current_index.replace(None);
 
-        for station in self.stations.borrow().iter() {
+        let mut rows_span = Span::new("history.build_rows");
+        rows_span.set_count(0);
+        for (index, station) in self.stations.borrow().iter().enumerate() {
             let station = station.clone();
             let station_for_row = station.clone();
             let repository_manager = self.repository_manager.clone();
@@ -257,8 +291,11 @@ impl HistoryWindow {
                     }
                 },
             ));
+            rows_span.progress(index + 1);
         }
+        drop(rows_span);
 
+        let _span = Span::new("history.select_first_row");
         if let Some(row) = self.history_list_box.row_at_index(0) {
             self.history_list_box.select_row(Some(&row));
         } else {
@@ -269,8 +306,15 @@ impl HistoryWindow {
     }
 
     pub fn refresh(self: &Rc<Self>) {
-        dialog_when_error!("Failed to load repository: {:?}", self.load_title());
-        dialog_when_error!("Failed to load history: {:?}", self.load_history());
+        let _span = Span::new("history.refresh");
+        dialog_when_error!(
+            "Failed to load repository: {:?}",
+            startup_log::measure_result("history.load_title", || self.load_title())
+        );
+        dialog_when_error!(
+            "Failed to load history: {:?}",
+            startup_log::measure_result("history.load_history", || self.load_history())
+        );
     }
 
     fn commit_button_clicked(&self) {
@@ -288,6 +332,7 @@ fn update_selected_commit_widgets(
     commit_diff_panel: &Rc<CommitDiffPanel>,
     station: &railway::RailwayStation,
 ) -> Result<(), git2::Error> {
+    let _span = Span::new("selection.commit_details");
     let repo = repository_manager.open()?;
     let commit = repo.find_commit(station.oid)?;
 
@@ -301,7 +346,9 @@ fn update_selected_commit_widgets(
     );
 
     commit_textview.buffer().set_text(&text);
-    commit_diff_panel.update_commit(station.oid)?;
+    startup_log::measure_result("selection.commit_diff", || {
+        commit_diff_panel.update_commit(station.oid)
+    })?;
     Ok(())
 }
 

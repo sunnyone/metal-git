@@ -8,6 +8,7 @@ use crate::commit_diff_util::ListCommitDiffResult;
 use crate::diff_text_view_util;
 use crate::diff_text_view_util::create_diff_text_buffer;
 use crate::repository_manager::RepositoryManager;
+use crate::startup_log::{self, Span};
 
 pub struct CommitDiffPanel {
     paned: gtk::Paned,
@@ -64,9 +65,12 @@ impl CommitDiffPanel {
     }
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {
-        let result =
-            commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
+        let result = startup_log::measure_result("diff.list_files", || {
+            commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)
+        })?;
 
+        let mut rows_span = Span::new("diff.build_file_rows");
+        rows_span.set_count(result.files.len());
         clear_list_box(&self.diff_list_box);
 
         for entry in &result.files {
@@ -78,7 +82,8 @@ impl CommitDiffPanel {
         }
 
         self.current_list_result.replace(Some(Rc::new(result)));
-        self.show_all_files_diff()?;
+        drop(rows_span);
+        startup_log::measure_result("diff.show_all_files", || self.show_all_files_diff())?;
         self.diff_list_box.unselect_all();
 
         Ok(())
@@ -140,10 +145,14 @@ impl CommitDiffPanel {
             let parent_tree = parent_commit.tree()?;
             let current_tree = current_commit.tree()?;
 
-            let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
+            let diff = startup_log::measure_result("diff.compute_patch", || {
+                repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)
+            })?;
 
             let buffer = self.commit_text_view.buffer();
-            diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
+            startup_log::measure("diff.render_text", || {
+                diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
+            });
         }
 
         Ok(())

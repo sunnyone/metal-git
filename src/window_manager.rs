@@ -4,6 +4,7 @@ use gtk::prelude::*;
 use crate::history_window::HistoryWindow;
 use crate::commit_window::CommitWindow;
 use crate::repository_manager::RepositoryManager;
+use crate::startup_log;
 
 pub struct WindowManager {
     app: gtk::Application,
@@ -23,12 +24,16 @@ impl WindowManager {
         });
 
         let windows = Windows {
-            history_window: HistoryWindow::new(
-                app,
-                Rc::downgrade(&window_manager),
-                repository_manager.clone(),
-            ),
-            commit_window: CommitWindow::new(app, repository_manager.clone()),
+            history_window: startup_log::measure("ui.history_window", || {
+                HistoryWindow::new(
+                    app,
+                    Rc::downgrade(&window_manager),
+                    repository_manager.clone(),
+                )
+            }),
+            commit_window: startup_log::measure("ui.commit_window", || {
+                CommitWindow::new(app, repository_manager.clone())
+            }),
         };
 
         *window_manager.windows.borrow_mut() = Some(windows);

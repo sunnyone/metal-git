@@ -6,6 +6,7 @@ use chrono::*;
 
 use git2::{Error, Oid};
 use crate::repository_manager::RepositoryManager;
+use crate::startup_log::{self, Span};
 
 #[derive(Clone, PartialEq)]
 pub struct RailwayTrack {
@@ -224,10 +225,14 @@ struct RefTable {
 
 impl RefTable {
     fn collect(repo: &git2::Repository) -> Result<RefTable, Error> {
+        let mut span = Span::new("history.references");
+        let mut count = 0;
         let mut table = HashMap::<Oid, Vec<String>>::new();
         let refs = repo.references()?;
         for r in refs {
             let r = r?;
+            count += 1;
+            span.progress(count);
             if let Some(oid) = r.target() {
                 if let Some(shorthand) = r.shorthand() {
                     match table.entry(oid) {
@@ -242,6 +247,7 @@ impl RefTable {
             }
         }
 
+        span.set_count(count);
         Ok(RefTable { oid_table: table })
     }
 
@@ -258,15 +264,22 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
 
     let ref_table = RefTable::collect(&repo)?;
 
-    let mut revwalk = repo.revwalk()?;
-
-    revwalk.set_sorting(git2::Sort::TIME)?;
-    revwalk.push_head()?;
+    let revwalk = startup_log::measure_result("history.revwalk_setup", || {
+        let mut revwalk = repo.revwalk()?;
+        revwalk.set_sorting(git2::Sort::TIME)?;
+        revwalk.push_head()?;
+        Ok::<_, Error>(revwalk)
+    })?;
 
     let mut track_line_map = TrackLineMap::new();
 
     let mut stations = Vec::<RailwayStation>::new();
+    let mut graph_span = Span::new("history.walk_and_graph");
+    graph_span.set_count(0);
+    // libgit2 may perform substantial traversal before yielding its first OID.
+    let mut first_commit_span = Some(Span::new("history.revwalk_first_commit"));
     for oid in revwalk {
+        drop(first_commit_span.take());
         let oid = oid?;
         let mut prev_to_map = HashMap::new();
         if let Some(last_station) = stations.last() {
@@ -338,6 +351,7 @@ pub fn collect_tree(repository_manager: &RepositoryManager) -> Result<Vec<Railwa
 
         let ref_names = ref_table.get_names_for_oid(&oid);
         stations.push(RailwayStation::new(&commit, ref_names, tracks));
+        graph_span.progress(stations.len());
     }
 
     // 	for station in stations.iter() {

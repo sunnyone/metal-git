@@ -17,6 +17,8 @@ impl RepositoryManager {
 
     pub fn open(&self) -> Result<Repository, Error> {
         // TODO: check the path is set
-        git2::Repository::discover(self.work_dir_path.borrow().as_str())
+        crate::startup_log::measure_result("repository.discover", || {
+            git2::Repository::discover(self.work_dir_path.borrow().as_str())
+        })
     }
 }
