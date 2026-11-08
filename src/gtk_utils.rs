@@ -5,7 +5,7 @@ macro_rules! dialog_when_error {
 	($message_template:expr, $e:expr) => (
 		if let Err(err) = $e {
 			let msg = format!($message_template, err);
-			crate::gtk_utils::message_box_error(&msg)
+			$crate::gtk_utils::message_box_error(&msg)
 		}
 	)
 }
@@ -46,5 +46,5 @@ pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
     buffer.insert(iter, text);
     let start_iter = buffer.iter_at_offset(start_offset);
 
-    buffer.apply_tag_by_name(tag_name, &start_iter, &iter);
+    buffer.apply_tag_by_name(tag_name, &start_iter, iter);
 }

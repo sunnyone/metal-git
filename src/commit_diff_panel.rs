@@ -71,7 +71,7 @@ impl CommitDiffPanel {
 
         for entry in &result.files {
             let label = gtk::Label::builder()
-                .label(&entry.format_file_move())
+                .label(entry.format_file_move())
                 .xalign(0.0)
                 .build();
             self.diff_list_box.append(&label);
