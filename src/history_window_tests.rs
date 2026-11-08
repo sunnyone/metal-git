@@ -102,6 +102,11 @@ fn wait_for_task(history_window: &HistoryWindow) {
     while context.iteration(false) {}
 }
 
+fn graph_contains(history_window: &HistoryWindow, commit_id: git2::Oid) -> bool {
+    let graph = history_window.graph.borrow().clone();
+    (0..graph.len()).any(|index| graph.commit(index).unwrap().oid == commit_id)
+}
+
 fn open_context_menu(
     history_window: &HistoryWindow,
     row: &HistoryRow,
@@ -184,6 +189,9 @@ fn action_for_label(menu: &gio::MenuModel, label: &str) -> String {
 
 #[test]
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
+    // The history scope is saved under the user's config directory
+    let config_dir = TempDir::new("history-window-config").unwrap();
+    std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
     gtk::init().unwrap();
     let test_repo = HistoryWindowTestRepo::new();
     let app = gtk::Application::builder()
@@ -265,8 +273,16 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
             .title()
             .map(|title| title.split_once(' ').unwrap().0.to_owned())
     );
-    let graph = history_window.graph.borrow().clone();
-    assert!((0..graph.len()).all(|index| graph.commit(index).unwrap().oid != test_repo.tip));
+    // All branches stay visible, so the previous branch can be reached again.
+    assert_eq!(0, history_window.history_scope_dropdown.selected());
+    assert!(graph_contains(&history_window, test_repo.tip));
+
+    history_window.history_scope_dropdown.set_selected(1);
+    assert!(!graph_contains(&history_window, test_repo.tip));
+    assert_eq!(
+        HistoryScope::CurrentBranch,
+        app_settings::load_history_scope(&app_settings::history_scope_path())
+    );
 
     let current_row = row_for_commit(&history_window, test_repo.middle);
     let (content, popover) = open_context_menu(&history_window, &current_row);
