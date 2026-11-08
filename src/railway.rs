@@ -338,15 +338,17 @@ impl RefTable {
         let refs = repo.references()?;
         for r in refs {
             let r = r?;
-            if let Some(oid) = r.target() {
-                if let Ok(shorthand) = r.shorthand() {
-                    match table.entry(oid) {
-                        Occupied(mut entry) => {
-                            entry.get_mut().push(shorthand.to_owned());
-                        }
-                        Vacant(entry) => {
-                            entry.insert(vec![shorthand.to_owned()]);
-                        }
+            if r.target().is_none() {
+                continue;
+            }
+            // Peeled so that an annotated tag labels its commit
+            if let (Ok(commit), Ok(shorthand)) = (r.peel_to_commit(), r.shorthand()) {
+                match table.entry(commit.id()) {
+                    Occupied(mut entry) => {
+                        entry.get_mut().push(shorthand.to_owned());
+                    }
+                    Vacant(entry) => {
+                        entry.insert(vec![shorthand.to_owned()]);
                     }
                 }
             }
