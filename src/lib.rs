@@ -21,6 +21,7 @@ mod repository_ext;
 mod static_resource;
 
 pub mod background_task;
+pub mod long_running_operation;
 pub mod railway;
 pub mod remote_operation;
 
