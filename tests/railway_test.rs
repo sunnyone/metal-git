@@ -163,6 +163,32 @@ pub fn all_branches_scope_excludes_stash() {
 }
 
 #[test]
+pub fn only_the_head_commit_names_the_current_branch() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+
+    let graph = collect(&test_repo, railway::HistoryScope::AllBranches);
+
+    let master = commit_at(&graph, test_repo.tip_oid("master")).unwrap();
+    let feature = commit_at(&graph, test_repo.tip_oid("feature")).unwrap();
+    assert_eq!(Some("master".to_string()), master.head_ref_name);
+    assert_eq!(None, feature.head_ref_name);
+}
+
+#[test]
+pub fn detached_head_is_labelled_and_shown() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let feature = test_repo.tip_oid("feature");
+    let repo = test_repo.repository_manager().open().unwrap();
+    repo.set_head_detached(feature).unwrap();
+
+    let graph = collect(&test_repo, railway::HistoryScope::CurrentBranch);
+
+    let head = commit_at(&graph, feature).unwrap();
+    assert_eq!(Some("HEAD".to_string()), head.head_ref_name);
+    assert!(head.ref_names.contains(&"HEAD".to_string()));
+}
+
+#[test]
 pub fn all_branches_scope_keeps_children_above_a_parent_with_the_same_time() {
     let temp_dir = tempdir::TempDir::new("railway-same-time").unwrap();
     let repo = git2::Repository::init(temp_dir.path()).unwrap();

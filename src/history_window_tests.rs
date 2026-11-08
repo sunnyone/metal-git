@@ -287,3 +287,16 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
     );
     assert!(!menu_label(&popover, "feature_test").is_sensitive());
 }
+
+#[test]
+fn should_mark_only_the_current_branch_label() {
+    let ref_names = vec!["master".to_owned(), "origin/master".to_owned()];
+
+    let markup = create_subject_markup(&ref_names, Some("master"), "subject <1>");
+
+    assert_eq!(
+        "<span foreground=\"#ffffff\" background=\"#a00000\"><b>[master]</b></span>\
+         <span foreground=\"#a00000\"><b>[origin/master]</b></span> subject &lt;1&gt;",
+        markup
+    );
+}

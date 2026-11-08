@@ -665,7 +665,7 @@ impl HistoryRow {
                 imp.graph
                     .set_content_width(station_renderer::desired_width_for_lanes(station.tracks.len()));
                 imp.subject
-                    .set_markup(&create_subject_markup(&station.ref_names, &station.subject));
+                    .set_markup(&create_subject_markup(&station.ref_names, station.head_ref_name.as_deref(), &station.subject));
                 imp.author.set_label(&station.author_name);
                 imp.time.set_label(&station.time);
             }
@@ -680,12 +680,18 @@ impl HistoryRow {
     }
 }
 
-fn create_subject_markup(ref_names: &[String], subject: &str) -> String {
+fn create_subject_markup(ref_names: &[String], head_ref_name: Option<&str>, subject: &str) -> String {
     let mut markup = String::new();
 
     for ref_name in ref_names {
+        let attributes = if head_ref_name == Some(ref_name.as_str()) {
+            "foreground=\"#ffffff\" background=\"#a00000\""
+        } else {
+            "foreground=\"#a00000\""
+        };
         let tag = format!(
-            "<span foreground=\"#a00000\"><b>[{}]</b></span>",
+            "<span {}><b>[{}]</b></span>",
+            attributes,
             gtk::glib::markup_escape_text(ref_name)
         );
         markup.push_str(&tag);

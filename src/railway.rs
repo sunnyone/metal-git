@@ -30,6 +30,7 @@ pub struct RailwayStation {
     pub oid: Oid,
     pub subject: String,
     pub ref_names: Vec<String>,
+    pub head_ref_name: Option<String>,
     pub author_name: String,
     pub time: String,
 
@@ -89,6 +90,7 @@ impl RailwayStation {
             oid: commit.oid,
             subject: commit.subject.clone(),
             ref_names: commit.ref_names.clone(),
+            head_ref_name: commit.head_ref_name.clone(),
             author_name: commit.author_name.clone(),
             time: commit.time.clone(),
         }
@@ -131,12 +133,13 @@ pub struct RailwayCommit {
     pub oid: Oid,
     pub subject: String,
     pub ref_names: Vec<String>,
+    pub head_ref_name: Option<String>,
     pub author_name: String,
     pub time: String,
 }
 
 impl RailwayCommit {
-    fn new(commit: &git2::Commit, ref_names: Vec<String>) -> RailwayCommit {
+    fn new(commit: &git2::Commit, ref_names: Vec<String>, head_ref_name: Option<String>) -> RailwayCommit {
         let message = commit.message().unwrap_or("");
         let first_line = message.lines().next().unwrap_or("");
 
@@ -147,6 +150,7 @@ impl RailwayCommit {
             oid: commit.id(),
             subject: first_line.to_string(),
             ref_names,
+            head_ref_name,
             author_name: commit.author().name().unwrap_or("").to_string(),
             time: format!("{}", commit_time.format("%Y-%m-%d %H:%M:%S %Z")),
         }
@@ -289,7 +293,7 @@ impl<'a> LineAssigner<'a> {
         line_number
     }
 
-    fn add_commit(&mut self, commit: &git2::Commit, ref_names: Vec<String>) {
+    fn add_commit(&mut self, commit: &git2::Commit, ref_names: Vec<String>, head_ref_name: Option<String>) {
         let row = self.graph.commits.len();
         let oid = commit.id();
         self.graph.first_lines.push(self.graph.line_first_rows.len());
@@ -327,7 +331,7 @@ impl<'a> LineAssigner<'a> {
             self.graph.ended_lines.push(Some(active_line_number));
         }
 
-        self.graph.commits.push(RailwayCommit::new(commit, ref_names));
+        self.graph.commits.push(RailwayCommit::new(commit, ref_names, head_ref_name));
     }
 
     fn finish(self) {
@@ -387,6 +391,11 @@ pub fn collect_tree(repository_manager: &RepositoryManager, scope: HistoryScope)
         revwalk.push_glob("refs/tags/*")?;
     }
 
+    let head = repo.head()?;
+    let head_oid = head.peel_to_commit()?.id();
+    let head_detached = repo.head_detached()?;
+    let head_ref_name = if head_detached { "HEAD" } else { head.shorthand().unwrap_or("HEAD") };
+
     let mut graph = RailwayGraph::default();
     graph.parent_line_offsets.push(0);
     let mut assigner = LineAssigner {
@@ -398,8 +407,12 @@ pub fn collect_tree(repository_manager: &RepositoryManager, scope: HistoryScope)
     for oid in revwalk {
         let oid = oid?;
         let commit = repo.find_commit(oid)?;
-        let ref_names = ref_table.get_names_for_oid(&oid);
-        assigner.add_commit(&commit, ref_names);
+        let mut ref_names = ref_table.get_names_for_oid(&oid);
+        let is_head = oid == head_oid;
+        if is_head && head_detached {
+            ref_names.push(head_ref_name.to_owned());
+        }
+        assigner.add_commit(&commit, ref_names, is_head.then(|| head_ref_name.to_owned()));
     }
     assigner.finish();
 
