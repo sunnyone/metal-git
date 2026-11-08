@@ -4,6 +4,7 @@ extern crate gtk;
 use gtk::prelude::*;
 
 pub mod repository_manager;
+pub mod branch;
 
 #[macro_use]
 mod gtk_utils;
