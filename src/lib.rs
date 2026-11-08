@@ -20,7 +20,11 @@ mod diff_text_view_util;
 mod repository_ext;
 mod static_resource;
 
+pub mod background_task;
+pub mod fetch_operation;
+pub mod long_running_operation;
 pub mod railway;
+pub mod remote_operation;
 
 pub fn run_app() {
     static_resource::init();
