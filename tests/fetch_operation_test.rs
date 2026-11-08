@@ -30,7 +30,7 @@ fn succeeded(message: &str) -> LongRunningStatus {
 #[test]
 pub fn started_message() {
 	assert_eq!(
-		LongRunningStatus::Started { message: "Fetching...".to_string() },
+		LongRunningStatus::Started { message: "Fetching...".to_string(), cancellable: true },
 		FetchOperation::describe(&Event::Started)
 	);
 }

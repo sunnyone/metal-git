@@ -25,6 +25,7 @@ impl LongRunningOperation for FetchOperation {
         match event {
             LongRunningEvent::Started => LongRunningStatus::Started {
                 message: "Fetching...".to_string(),
+                cancellable: true,
             },
             LongRunningEvent::Progress(progress) => describe_transfer("Fetching", progress),
             LongRunningEvent::Succeeded(summary) => LongRunningStatus::Succeeded {

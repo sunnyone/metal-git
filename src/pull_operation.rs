@@ -26,6 +26,7 @@ impl LongRunningOperation for PullOperation {
         match event {
             LongRunningEvent::Started => LongRunningStatus::Started {
                 message: "Pulling...".to_string(),
+                cancellable: true,
             },
             LongRunningEvent::Progress(progress) => describe_transfer("Pulling", progress),
             LongRunningEvent::Succeeded(summary) => LongRunningStatus::Succeeded {

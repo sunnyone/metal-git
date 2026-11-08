@@ -20,7 +20,7 @@ fn progress(message: &str) -> LongRunningStatus {
 }
 
 fn started() -> LongRunningStatus {
-	LongRunningStatus::Started { message: "Testing...".to_string() }
+	LongRunningStatus::Started { message: "Testing...".to_string(), cancellable: true }
 }
 
 fn succeeded() -> LongRunningStatus {
@@ -220,7 +220,7 @@ pub fn common_wording_for_undescribed_events() {
 	type Event = LongRunningEvent<(), (), String>;
 
 	assert_eq!(
-		LongRunningStatus::Started { message: "Test...".to_string() },
+		LongRunningStatus::Started { message: "Test...".to_string(), cancellable: true },
 		describe_common("Test", &Event::Started)
 	);
 	assert_eq!(

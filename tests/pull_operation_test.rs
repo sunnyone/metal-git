@@ -21,7 +21,7 @@ fn succeeded(message: &str) -> LongRunningStatus {
 #[test]
 pub fn started_message() {
 	assert_eq!(
-		LongRunningStatus::Started { message: "Pulling...".to_string() },
+		LongRunningStatus::Started { message: "Pulling...".to_string(), cancellable: true },
 		PullOperation::describe(&Event::Started)
 	);
 }

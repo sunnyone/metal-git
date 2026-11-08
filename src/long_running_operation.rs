@@ -5,7 +5,7 @@ use std::fmt::Display;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LongRunningStatus {
-    Started { message: String },
+    Started { message: String, cancellable: bool },
     Progress { message: String, fraction: Option<f64> },
     Succeeded { message: String, reload_history: bool },
     Cancelled { message: String },
@@ -79,6 +79,7 @@ pub fn describe_common<P, T, E: Display>(name: &str, event: &LongRunningEvent<P,
     match event {
         LongRunningEvent::Started => LongRunningStatus::Started {
             message: format!("{}...", name),
+            cancellable: true,
         },
         LongRunningEvent::Progress(_) => LongRunningStatus::Progress {
             message: format!("{}...", name),
