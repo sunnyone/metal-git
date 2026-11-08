@@ -75,12 +75,12 @@ impl StatusBar {
 
     pub fn apply(&self, status: &LongRunningStatus) {
         match status {
-            LongRunningStatus::Started { message } => {
+            LongRunningStatus::Started { message, cancellable } => {
                 self.set_message(message);
                 self.progress_bar.set_fraction(0.0);
                 self.progress_bar.set_visible(true);
                 self.cancel_button.set_sensitive(true);
-                self.cancel_button.set_visible(true);
+                self.cancel_button.set_visible(*cancellable);
             }
             LongRunningStatus::Progress { message, fraction } => {
                 self.set_message(message);

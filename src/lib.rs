@@ -4,6 +4,7 @@ extern crate gtk;
 use gtk::prelude::*;
 
 pub mod repository_manager;
+pub mod branch;
 
 #[macro_use]
 mod gtk_utils;
@@ -16,6 +17,7 @@ mod commit_diff_panel;
 mod status_bar;
 mod commit_diff_util;
 mod diff_text_view_util;
+mod branch_context_menu;
 
 mod repository_ext;
 mod static_resource;
@@ -23,6 +25,7 @@ mod static_resource;
 pub mod background_task;
 pub mod fetch_operation;
 pub mod pull_operation;
+pub mod switch_branch_operation;
 pub mod long_running_operation;
 pub mod railway;
 pub mod remote_operation;
