@@ -339,7 +339,7 @@ impl RefTable {
         for r in refs {
             let r = r?;
             if let Some(oid) = r.target() {
-                if let Some(shorthand) = r.shorthand() {
+                if let Ok(shorthand) = r.shorthand() {
                     match table.entry(oid) {
                         Occupied(mut entry) => {
                             entry.get_mut().push(shorthand.to_owned());

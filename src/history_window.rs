@@ -290,7 +290,7 @@ impl HistoryWindow {
 
         let mut title = String::new();
         if let Ok(reference) = repo.head() {
-            if let Some(head_shorthand) = reference.shorthand() {
+            if let Ok(head_shorthand) = reference.shorthand() {
                 title.push('[');
                 title.push_str(head_shorthand);
                 title.push_str("] ");
