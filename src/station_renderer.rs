@@ -28,6 +28,10 @@ fn box_x(index: usize) -> i32 {
     index as i32 * TRACK_BOX_SIZE
 }
 
+fn box_center_x(index: usize) -> f64 {
+    (box_x(index) + TRACK_BOX_SIZE / 2) as f64
+}
+
 pub fn desired_width_for_lanes(lane_count: usize) -> i32 {
     lane_count.max(1) as i32 * TRACK_BOX_SIZE + 12
 }
@@ -42,7 +46,6 @@ pub fn render(
     width: i32,
     height: i32,
 ) -> Result<(), Error> {
-    let box_width = TRACK_BOX_SIZE;
     let box_height = height.max(ROW_HEIGHT);
     let dot_radius = commit_dot_radius(box_height);
     let line_offset = merge_line_offset(box_height) as f64;
@@ -53,8 +56,7 @@ pub fn render(
     context.set_line_width(2.0);
 
     for track in &station.tracks {
-        let track_box_x = box_x(track.track_number.as_usize()) as f64;
-        let center_x = track_box_x + box_width as f64 / 2.0;
+        let center_x = box_center_x(track.track_number.as_usize());
         let center_y = height as f64 / 2.0;
 
         if !track.from_tracks.is_empty() {
@@ -63,10 +65,7 @@ pub fn render(
             context.stroke()?;
 
             for num in &track.from_tracks {
-                context.move_to(
-                    (box_x(num.as_usize()) + box_width / 2) as f64 + 1.0,
-                    0.0,
-                );
+                context.move_to(box_center_x(num.as_usize()), 0.0);
                 context.line_to(center_x, line_offset);
                 context.stroke()?;
             }
@@ -79,10 +78,7 @@ pub fn render(
 
             for num in track.to_tracks.borrow().iter() {
                 context.move_to(center_x, bottom_y - line_offset);
-                context.line_to(
-                    (box_x(num.as_usize()) + box_width / 2) as f64 + 1.0,
-                    bottom_y,
-                );
+                context.line_to(box_center_x(num.as_usize()), bottom_y);
                 context.stroke()?;
             }
         }
