@@ -11,6 +11,7 @@ name = "metal_git"
 git2 = "^0.18"
 gtk = { package = "gtk4", version = "0.9" }
 chrono = "*"
+futures = "0.3"
 
 [dev-dependencies]
 tempdir = "0.3"
