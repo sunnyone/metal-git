@@ -13,13 +13,14 @@ use std::rc::Rc;
 use std::str;
 
 use git2::build::CheckoutBuilder;
-use git2::{Error, StatusOptions};
+use git2::Error;
 
 use crate::diff_text_view_util;
 use crate::diff_text_view_util::create_diff_text_buffer;
 use crate::gtk_utils;
 use crate::repository_ext::RepositoryExt;
 use crate::repository_manager::RepositoryManager;
+use crate::work_tree_status;
 
 pub struct CommitWindow {
     window: gtk::Window,
@@ -714,10 +715,7 @@ fn collect_changed_status_items(
         return Err(Error::from_str("cannot report status on bare repository"));
     }
 
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true).recurse_untracked_dirs(true);
-
-    let statuses = repo.statuses(Some(&mut opts))?;
+    let statuses = repo.statuses(Some(&mut work_tree_status::changed_files_status_options()))?;
     let mut status_items: Vec<StatusItem> = Vec::new();
 
     for status in statuses.iter() {

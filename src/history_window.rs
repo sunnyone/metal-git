@@ -16,6 +16,7 @@ use crate::station_renderer;
 use crate::switch_branch_operation::SwitchBranchOperation;
 use crate::status_bar::StatusBar;
 use crate::window_manager::WindowManager;
+use crate::work_tree_status;
 use git2::Error;
 use gtk::gdk;
 use gtk::gio;
@@ -47,7 +48,7 @@ pub struct HistoryWindow {
     push_button: gtk_utils::BadgeButton,
     // False when there is nothing the push button could do, like on a detached HEAD
     push_available: Cell<bool>,
-    commit_button: gtk::Button,
+    commit_button: gtk_utils::BadgeButton,
     refresh_button: gtk::Button,
     history_scope_dropdown: gtk::DropDown,
     history_list_view: gtk::ListView,
@@ -111,8 +112,9 @@ impl HistoryWindow {
         let push_button = gtk_utils::BadgeButton::new("metal-git-push-symbolic", "Push");
         button_row.append(push_button.button());
 
-        let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
-        button_row.append(&commit_button);
+        // The badge shows how many files have changes to commit
+        let commit_button = gtk_utils::BadgeButton::new("metal-git-commit-symbolic", "Commit");
+        button_row.append(commit_button.button());
 
         let refresh_button = gtk_utils::icon_button("metal-git-refresh-symbolic", "Refresh");
         button_row.append(&refresh_button);
@@ -257,7 +259,7 @@ impl HistoryWindow {
         });
 
         let w = Rc::downgrade(&history_window);
-        history_window.commit_button.connect_clicked(move |_| {
+        history_window.commit_button.button().connect_clicked(move |_| {
             w.upgrade().unwrap().commit_button_clicked();
         });
 
@@ -401,6 +403,7 @@ impl HistoryWindow {
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
         self.update_pull_button();
         self.update_push_button();
+        self.update_commit_button();
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
 
@@ -503,6 +506,30 @@ impl HistoryWindow {
         self.pull_button.button().set_sensitive(available && !self.task_runner.is_running());
     }
 
+    /// Shows how many files have changes to commit.
+    fn update_commit_button(&self) {
+        let counts = self
+            .repository_manager
+            .open()
+            .and_then(|repo| work_tree_status::count_changes(&repo));
+
+        let (badge, tooltip) = match counts {
+            Ok(counts) if counts.changed_files > 0 => (
+                Some(counts.changed_files.to_string()),
+                format!(
+                    "Commit: {} ({} staged)",
+                    changed_files_text(counts.changed_files),
+                    counts.staged_files
+                ),
+            ),
+            Ok(_) => (None, "Commit: no changes".to_string()),
+            Err(_) => (None, "Commit".to_string()),
+        };
+
+        self.commit_button.set_badge(badge.as_deref());
+        self.commit_button.button().set_tooltip_text(Some(&tooltip));
+    }
+
     /// Shows how many commits the current branch has to push, or why it cannot push.
     fn update_push_button(&self) {
         let state = match self.repository_manager.open() {
@@ -564,7 +591,7 @@ impl HistoryWindow {
         self.fetch_button.set_sensitive(!status.is_running());
         self.pull_button.button().set_sensitive(!status.is_running() && self.pull_available.get());
         self.push_button.button().set_sensitive(!status.is_running() && self.push_available.get());
-        self.commit_button.set_sensitive(!status.is_running());
+        self.commit_button.button().set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status
         if status.reload_history() {
             self.refresh();
@@ -702,6 +729,14 @@ fn install_history_list_css() {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+    }
+}
+
+fn changed_files_text(count: usize) -> String {
+    if count == 1 {
+        "1 changed file".to_string()
+    } else {
+        format!("{} changed files", count)
     }
 }
 
