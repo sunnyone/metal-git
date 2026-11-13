@@ -237,11 +237,11 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
         message: "Testing...".to_owned(),
         cancellable: false,
     });
-    assert!(!history_window.commit_button.is_sensitive());
+    assert!(!history_window.commit_button.button().is_sensitive());
     history_window.on_status(LongRunningStatus::Cancelled {
         message: "Cancelled".to_owned(),
     });
-    assert!(history_window.commit_button.is_sensitive());
+    assert!(history_window.commit_button.button().is_sensitive());
 
     let previous_row = row_for_commit(&history_window, test_repo.middle);
 

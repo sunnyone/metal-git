@@ -32,6 +32,7 @@ pub mod switch_branch_operation;
 pub mod long_running_operation;
 pub mod railway;
 pub mod remote_operation;
+pub mod work_tree_status;
 
 pub fn run_app() {
     static_resource::init();
