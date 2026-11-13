@@ -7,6 +7,9 @@ use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
 use crate::long_running_operation::{self, LongRunningStatus, LongRunningStatusSender};
 use crate::pull_operation::PullOperation;
+use crate::push_dialog::PushDialog;
+use crate::push_operation::PushOperation;
+use crate::remote_operation::{self, PushButtonState, PushRequest};
 use crate::railway::{self, HistoryScope};
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
@@ -21,7 +24,7 @@ use gtk::glib::BoxedAnyObject;
 use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
@@ -39,6 +42,10 @@ pub struct HistoryWindow {
     status_sender: LongRunningStatusSender,
     fetch_button: gtk::Button,
     pull_button: gtk::Button,
+    push_button: gtk::Button,
+    push_badge: gtk::Label,
+    // False when there is nothing the push button could do, like on a detached HEAD
+    push_available: Cell<bool>,
     commit_button: gtk::Button,
     refresh_button: gtk::Button,
     history_scope_dropdown: gtk::DropDown,
@@ -96,6 +103,9 @@ impl HistoryWindow {
 
         let pull_button = gtk_utils::icon_button("metal-git-pull-symbolic", "Pull");
         button_row.append(&pull_button);
+
+        let (push_button, push_badge) = build_push_button();
+        button_row.append(&push_button);
 
         let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
         button_row.append(&commit_button);
@@ -192,6 +202,9 @@ impl HistoryWindow {
                 status_sender,
                 fetch_button,
                 pull_button,
+                push_button,
+                push_badge,
+                push_available: Cell::new(true),
                 commit_button,
                 refresh_button,
                 history_scope_dropdown,
@@ -232,6 +245,11 @@ impl HistoryWindow {
         let w = Rc::downgrade(&history_window);
         history_window.pull_button.connect_clicked(move |_| {
             w.upgrade().unwrap().pull_button_clicked();
+        });
+
+        let w = Rc::downgrade(&history_window);
+        history_window.push_button.connect_clicked(move |_| {
+            w.upgrade().unwrap().push_button_clicked();
         });
 
         let w = Rc::downgrade(&history_window);
@@ -377,6 +395,7 @@ impl HistoryWindow {
     pub fn refresh(&self) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
+        self.update_push_button();
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
 
@@ -410,6 +429,73 @@ impl HistoryWindow {
         }
     }
 
+    fn push_button_clicked(self: &Rc<Self>) {
+        if self.task_runner.is_running() {
+            return;
+        }
+        let w = Rc::downgrade(self);
+        let result = PushDialog::present(&self.window, self.repository_manager.clone(), move |request| {
+            if let Some(w) = w.upgrade() {
+                w.start_push(request);
+            }
+        });
+        if let Err(err) = result {
+            gtk_utils::message_box_error(&format!("Cannot push: {}", err.message()));
+        }
+    }
+
+    fn start_push(&self, request: PushRequest) {
+        if let Some(git_dir) = self.git_dir() {
+            long_running_operation::start_operation(
+                &self.task_runner,
+                PushOperation { git_dir, request },
+                &self.status_sender,
+            );
+        }
+    }
+
+    /// Shows how many commits the current branch has to push, or why it cannot push.
+    fn update_push_button(&self) {
+        let state = match self.repository_manager.open() {
+            Ok(repo) => remote_operation::push_button_state(&repo),
+            Err(_) => PushButtonState::NoBranch,
+        };
+
+        let (badge, tooltip, available) = match &state {
+            PushButtonState::NoBranch => (None, "HEAD is not on a branch".to_string(), false),
+            PushButtonState::NoRemote => (None, "No remotes are configured".to_string(), false),
+            PushButtonState::NoUpstream { branch } => (
+                Some("\u{2191}+".to_string()),
+                format!("{} has no upstream. Push it to a new remote branch", branch),
+                true,
+            ),
+            PushButtonState::Ahead { branch, upstream, count } => (
+                Some(format!("\u{2191}{}", count)),
+                format!(
+                    "Push {} from {} to {}",
+                    crate::push_operation::commit_count_text(*count),
+                    branch,
+                    upstream
+                ),
+                true,
+            ),
+            PushButtonState::UpToDate { branch, upstream } => {
+                (None, format!("{} is up to date with {}", branch, upstream), true)
+            }
+        };
+
+        match badge {
+            Some(text) => {
+                self.push_badge.set_text(&text);
+                self.push_badge.set_visible(true);
+            }
+            None => self.push_badge.set_visible(false),
+        }
+        self.push_button.set_tooltip_text(Some(&tooltip));
+        self.push_available.set(available);
+        self.push_button.set_sensitive(available && !self.task_runner.is_running());
+    }
+
     fn history_scope(&self) -> HistoryScope {
         history_scope_from_index(self.history_scope_dropdown.selected())
     }
@@ -434,6 +520,7 @@ impl HistoryWindow {
     fn on_status(&self, status: LongRunningStatus) {
         self.fetch_button.set_sensitive(!status.is_running());
         self.pull_button.set_sensitive(!status.is_running());
+        self.push_button.set_sensitive(!status.is_running() && self.push_available.get());
         self.commit_button.set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status
         if status.reload_history() {
@@ -545,6 +632,19 @@ fn install_history_list_css() {
             border-radius: 0;
         }
 
+        .push-badge {
+            background-color: @theme_selected_bg_color;
+            color: @theme_selected_fg_color;
+            border-radius: 9px;
+            padding: 0 6px;
+            font-size: smaller;
+            font-weight: bold;
+        }
+
+        button:disabled .push-badge {
+            background-color: alpha(currentColor, 0.3);
+        }
+
         .history-header {
             padding: 6px 8px;
             border-bottom: 1px solid alpha(currentColor, 0.18);
@@ -560,6 +660,29 @@ fn install_history_list_css() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+/// The push button shows its label and, when there is something to push, a badge like `↑3`
+/// (`↑+` when the branch has no upstream yet).
+fn build_push_button() -> (gtk::Button, gtk::Label) {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    content.append(&gtk::Image::from_icon_name("metal-git-push-symbolic"));
+    content.append(&gtk::Label::new(Some("Push")));
+    let badge = gtk::Label::builder()
+        .css_classes(["push-badge"])
+        .valign(gtk::Align::Center)
+        .visible(false)
+        .build();
+    content.append(&badge);
+
+    let button = gtk::Button::builder()
+        .child(&content)
+        .tooltip_text("Push")
+        .build();
+    (button, badge)
 }
 
 fn build_history_header() -> gtk::Box {
