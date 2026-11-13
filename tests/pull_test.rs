@@ -4,7 +4,7 @@ extern crate tempdir;
 extern crate metal_git;
 
 use git2::{Oid, Repository, Signature};
-use metal_git::remote_operation::{self, PullSummary};
+use metal_git::remote_operation::{self, PullButtonState, PullSummary};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
@@ -161,4 +161,72 @@ pub fn pull_cancelled_changes_nothing() {
 	assert!(result.is_err());
 	assert_eq!(before, head(&repos.local));
 	assert_eq!("1\n", read(&repos.local, "a.txt"));
+}
+
+fn fetch(repo: &Repository) {
+	remote_operation::fetch_all(repo, &AtomicBool::new(false), |_| {}).unwrap();
+}
+
+fn up_to_date() -> PullButtonState {
+	PullButtonState::UpToDate { branch: "master".to_string(), upstream: "origin/master".to_string() }
+}
+
+#[test]
+pub fn button_state_follows_the_upstream() {
+	let repos = pull_repos();
+	assert_eq!(
+		up_to_date(),
+		remote_operation::pull_button_state(&repos.local)
+	);
+
+	commit_file(&repos.origin, "a.txt", "2\n");
+	commit_file(&repos.origin, "b.txt", "new\n");
+	// Nothing changes until the new commits are fetched
+	assert_eq!(
+		up_to_date(),
+		remote_operation::pull_button_state(&repos.local)
+	);
+
+	fetch(&repos.local);
+	assert_eq!(
+		PullButtonState::Behind { branch: "master".to_string(), upstream: "origin/master".to_string(), count: 2 },
+		remote_operation::pull_button_state(&repos.local)
+	);
+
+	commit_file(&repos.local, "c.txt", "local\n");
+	assert_eq!(
+		PullButtonState::Diverged {
+			branch: "master".to_string(),
+			upstream: "origin/master".to_string(),
+			behind: 2,
+			ahead: 1,
+		},
+		remote_operation::pull_button_state(&repos.local)
+	);
+}
+
+#[test]
+pub fn button_state_when_only_ahead_is_up_to_date() {
+	let repos = pull_repos();
+	commit_file(&repos.local, "b.txt", "local\n");
+
+	assert_eq!(
+		up_to_date(),
+		remote_operation::pull_button_state(&repos.local)
+	);
+}
+
+#[test]
+pub fn button_state_without_upstream_or_branch() {
+	let repos = pull_repos();
+	let head = repos.local.head().unwrap().peel_to_commit().unwrap();
+	repos.local.branch("feature", &head, false).unwrap();
+	repos.local.set_head("refs/heads/feature").unwrap();
+	assert_eq!(
+		PullButtonState::NoUpstream { branch: "feature".to_string() },
+		remote_operation::pull_button_state(&repos.local)
+	);
+
+	repos.local.set_head_detached(head.id()).unwrap();
+	assert_eq!(PullButtonState::NoBranch, remote_operation::pull_button_state(&repos.local));
 }

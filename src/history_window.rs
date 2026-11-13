@@ -9,7 +9,7 @@ use crate::long_running_operation::{self, LongRunningStatus, LongRunningStatusSe
 use crate::pull_operation::PullOperation;
 use crate::push_dialog::PushDialog;
 use crate::push_operation::PushOperation;
-use crate::remote_operation::{self, PushButtonState, PushRequest};
+use crate::remote_operation::{self, PullButtonState, PushButtonState, PushRequest};
 use crate::railway::{self, HistoryScope};
 use crate::repository_manager::RepositoryManager;
 use crate::station_renderer;
@@ -41,7 +41,9 @@ pub struct HistoryWindow {
     task_runner: Rc<TaskRunner>,
     status_sender: LongRunningStatusSender,
     fetch_button: gtk::Button,
-    pull_button: gtk::Button,
+    pull_button: gtk_utils::BadgeButton,
+    // False when the pull button could not do anything, like on a branch without an upstream
+    pull_available: Cell<bool>,
     push_button: gtk_utils::BadgeButton,
     // False when there is nothing the push button could do, like on a detached HEAD
     push_available: Cell<bool>,
@@ -100,8 +102,9 @@ impl HistoryWindow {
         let fetch_button = gtk_utils::icon_button("metal-git-fetch-symbolic", "Fetch");
         button_row.append(&fetch_button);
 
-        let pull_button = gtk_utils::icon_button("metal-git-pull-symbolic", "Pull");
-        button_row.append(&pull_button);
+        // The badge shows how many commits there are to pull as of the last fetch, like `↓3`
+        let pull_button = gtk_utils::BadgeButton::new("metal-git-pull-symbolic", "Pull");
+        button_row.append(pull_button.button());
 
         // The badge shows how many commits there are to push, like `↑3`
         // (`↑+` when the branch has no upstream yet)
@@ -203,6 +206,7 @@ impl HistoryWindow {
                 status_sender,
                 fetch_button,
                 pull_button,
+                pull_available: Cell::new(true),
                 push_button,
                 push_available: Cell::new(true),
                 commit_button,
@@ -243,7 +247,7 @@ impl HistoryWindow {
         });
 
         let w = Rc::downgrade(&history_window);
-        history_window.pull_button.connect_clicked(move |_| {
+        history_window.pull_button.button().connect_clicked(move |_| {
             w.upgrade().unwrap().pull_button_clicked();
         });
 
@@ -395,6 +399,7 @@ impl HistoryWindow {
     pub fn refresh(&self) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load history: {:?}", self.load_history());
+        self.update_pull_button();
         self.update_push_button();
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
@@ -452,6 +457,50 @@ impl HistoryWindow {
                 &self.status_sender,
             );
         }
+    }
+
+    /// Shows how many commits the current branch can pull, or why it cannot pull.
+    fn update_pull_button(&self) {
+        let state = match self.repository_manager.open() {
+            Ok(repo) => remote_operation::pull_button_state(&repo),
+            Err(_) => PullButtonState::NoBranch,
+        };
+
+        let (badge, tooltip, available) = match &state {
+            PullButtonState::NoBranch => (None, "HEAD is not on a branch".to_string(), false),
+            PullButtonState::NoUpstream { branch } => {
+                (None, format!("{} has no upstream to pull from", branch), false)
+            }
+            PullButtonState::Behind { branch, upstream, count } => (
+                Some(format!("\u{2193}{}", count)),
+                format!(
+                    "Pull {} from {} into {} (as of the last fetch)",
+                    crate::push_operation::commit_count_text(*count),
+                    upstream,
+                    branch
+                ),
+                true,
+            ),
+            // Still available: the pull fetches first, and the upstream may have been reset
+            PullButtonState::Diverged { branch, upstream, behind, ahead } => (
+                Some(format!("\u{2193}{}\u{2191}{}", behind, ahead)),
+                format!(
+                    "{} and {} have diverged ({} behind, {} ahead), so they cannot be fast-forwarded",
+                    branch, upstream, behind, ahead
+                ),
+                true,
+            ),
+            PullButtonState::UpToDate { branch, upstream } => (
+                None,
+                format!("{} is up to date with {} as of the last fetch", branch, upstream),
+                true,
+            ),
+        };
+
+        self.pull_button.set_badge(badge.as_deref());
+        self.pull_button.button().set_tooltip_text(Some(&tooltip));
+        self.pull_available.set(available);
+        self.pull_button.button().set_sensitive(available && !self.task_runner.is_running());
     }
 
     /// Shows how many commits the current branch has to push, or why it cannot push.
@@ -513,7 +562,7 @@ impl HistoryWindow {
 
     fn on_status(&self, status: LongRunningStatus) {
         self.fetch_button.set_sensitive(!status.is_running());
-        self.pull_button.set_sensitive(!status.is_running());
+        self.pull_button.button().set_sensitive(!status.is_running() && self.pull_available.get());
         self.push_button.button().set_sensitive(!status.is_running() && self.push_available.get());
         self.commit_button.set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status

@@ -274,6 +274,19 @@ pub enum PushButtonState {
     UpToDate { branch: String, upstream: String },
 }
 
+/// The state of the pull button, for the branch HEAD is on. The counts are against the
+/// upstream as last fetched; the pull itself fetches again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PullButtonState {
+    NoBranch,
+    NoUpstream { branch: String },
+    /// The upstream has commits the branch does not have, and a fast-forward can take them.
+    Behind { branch: String, upstream: String, count: usize },
+    /// Both have commits the other does not have, so a fast-forward is not possible.
+    Diverged { branch: String, upstream: String, behind: usize, ahead: usize },
+    UpToDate { branch: String, upstream: String },
+}
+
 pub fn local_branch_names(repo: &Repository) -> Result<Vec<String>, Error> {
     let mut names = Vec::new();
     for branch in repo.branches(Some(BranchType::Local))? {
@@ -404,6 +417,35 @@ pub fn push_button_state(repo: &Repository) -> PushButtonState {
         PushButtonState::UpToDate { branch: branch_name, upstream: upstream_name }
     } else {
         PushButtonState::Ahead { branch: branch_name, upstream: upstream_name, count }
+    }
+}
+
+/// The state of the pull button, for the branch HEAD is on.
+pub fn pull_button_state(repo: &Repository) -> PullButtonState {
+    let Some(branch_name) = current_branch_name(repo) else {
+        return PullButtonState::NoBranch;
+    };
+
+    let upstream = repo
+        .find_branch(&branch_name, BranchType::Local)
+        .and_then(|branch| branch.upstream());
+    let Ok(upstream) = upstream else {
+        return PullButtonState::NoUpstream { branch: branch_name };
+    };
+    let upstream_name = upstream.name().ok().flatten().unwrap_or("").to_string();
+
+    let (ahead, behind) = match (local_branch_oid(repo, &branch_name), upstream.get().target()) {
+        (Ok(local_oid), Some(upstream_oid)) => {
+            repo.graph_ahead_behind(local_oid, upstream_oid).unwrap_or((0, 0))
+        }
+        _ => (0, 0),
+    };
+    match (behind, ahead) {
+        (0, _) => PullButtonState::UpToDate { branch: branch_name, upstream: upstream_name },
+        (count, 0) => PullButtonState::Behind { branch: branch_name, upstream: upstream_name, count },
+        (behind, ahead) => {
+            PullButtonState::Diverged { branch: branch_name, upstream: upstream_name, behind, ahead }
+        }
     }
 }
 
