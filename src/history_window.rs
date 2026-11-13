@@ -42,8 +42,7 @@ pub struct HistoryWindow {
     status_sender: LongRunningStatusSender,
     fetch_button: gtk::Button,
     pull_button: gtk::Button,
-    push_button: gtk::Button,
-    push_badge: gtk::Label,
+    push_button: gtk_utils::BadgeButton,
     // False when there is nothing the push button could do, like on a detached HEAD
     push_available: Cell<bool>,
     commit_button: gtk::Button,
@@ -104,8 +103,10 @@ impl HistoryWindow {
         let pull_button = gtk_utils::icon_button("metal-git-pull-symbolic", "Pull");
         button_row.append(&pull_button);
 
-        let (push_button, push_badge) = build_push_button();
-        button_row.append(&push_button);
+        // The badge shows how many commits there are to push, like `↑3`
+        // (`↑+` when the branch has no upstream yet)
+        let push_button = gtk_utils::BadgeButton::new("metal-git-push-symbolic", "Push");
+        button_row.append(push_button.button());
 
         let commit_button = gtk_utils::icon_button("metal-git-commit-symbolic", "Commit");
         button_row.append(&commit_button);
@@ -203,7 +204,6 @@ impl HistoryWindow {
                 fetch_button,
                 pull_button,
                 push_button,
-                push_badge,
                 push_available: Cell::new(true),
                 commit_button,
                 refresh_button,
@@ -248,7 +248,7 @@ impl HistoryWindow {
         });
 
         let w = Rc::downgrade(&history_window);
-        history_window.push_button.connect_clicked(move |_| {
+        history_window.push_button.button().connect_clicked(move |_| {
             w.upgrade().unwrap().push_button_clicked();
         });
 
@@ -484,16 +484,10 @@ impl HistoryWindow {
             }
         };
 
-        match badge {
-            Some(text) => {
-                self.push_badge.set_text(&text);
-                self.push_badge.set_visible(true);
-            }
-            None => self.push_badge.set_visible(false),
-        }
-        self.push_button.set_tooltip_text(Some(&tooltip));
+        self.push_button.set_badge(badge.as_deref());
+        self.push_button.button().set_tooltip_text(Some(&tooltip));
         self.push_available.set(available);
-        self.push_button.set_sensitive(available && !self.task_runner.is_running());
+        self.push_button.button().set_sensitive(available && !self.task_runner.is_running());
     }
 
     fn history_scope(&self) -> HistoryScope {
@@ -520,7 +514,7 @@ impl HistoryWindow {
     fn on_status(&self, status: LongRunningStatus) {
         self.fetch_button.set_sensitive(!status.is_running());
         self.pull_button.set_sensitive(!status.is_running());
-        self.push_button.set_sensitive(!status.is_running() && self.push_available.get());
+        self.push_button.button().set_sensitive(!status.is_running() && self.push_available.get());
         self.commit_button.set_sensitive(!status.is_running());
         // refresh shows its own message, so it must come before the status
         if status.reload_history() {
@@ -632,7 +626,7 @@ fn install_history_list_css() {
             border-radius: 0;
         }
 
-        .push-badge {
+        .button-badge {
             background-color: @theme_selected_bg_color;
             color: @theme_selected_fg_color;
             border-radius: 9px;
@@ -641,7 +635,7 @@ fn install_history_list_css() {
             font-weight: bold;
         }
 
-        button:disabled .push-badge {
+        button:disabled .button-badge {
             background-color: alpha(currentColor, 0.3);
         }
 
@@ -660,29 +654,6 @@ fn install_history_list_css() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
-}
-
-/// The push button shows its label and, when there is something to push, a badge like `↑3`
-/// (`↑+` when the branch has no upstream yet).
-fn build_push_button() -> (gtk::Button, gtk::Label) {
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
-        .build();
-    content.append(&gtk::Image::from_icon_name("metal-git-push-symbolic"));
-    content.append(&gtk::Label::new(Some("Push")));
-    let badge = gtk::Label::builder()
-        .css_classes(["push-badge"])
-        .valign(gtk::Align::Center)
-        .visible(false)
-        .build();
-    content.append(&badge);
-
-    let button = gtk::Button::builder()
-        .child(&content)
-        .tooltip_text("Push")
-        .build();
-    (button, badge)
 }
 
 fn build_history_header() -> gtk::Box {
