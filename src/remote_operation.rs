@@ -182,7 +182,7 @@ impl CredentialProvider {
             return Cred::default();
         }
 
-        Err(Error::from_str(&format!("Authentication failed for {}", url)))
+        Err(Error::from_str(&format!("Authentication failed for {}", mask_url_credentials(url))))
     }
 }
 
