@@ -18,6 +18,7 @@ mod status_bar;
 mod commit_diff_util;
 mod diff_text_view_util;
 mod branch_context_menu;
+mod push_dialog;
 
 mod repository_ext;
 mod static_resource;
@@ -26,6 +27,7 @@ pub mod app_settings;
 pub mod background_task;
 pub mod fetch_operation;
 pub mod pull_operation;
+pub mod push_operation;
 pub mod switch_branch_operation;
 pub mod long_running_operation;
 pub mod railway;

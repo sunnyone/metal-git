@@ -760,6 +760,7 @@ dependencies = [
  "git2",
  "gtk4",
  "tempdir",
+ "url",
 ]
 
 [[package]]
