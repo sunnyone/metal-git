@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use crate::diff_model::{DiffLine, FileDiff, FileStatus, LineKind};
 
+const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";
 pub const HUNK_HEADER: &str = "hunk-header";
 pub const ADDED: &str = "added";
@@ -20,6 +21,8 @@ const CLOSED_MARKER: &str = "▸";
 fn create_tag_table() -> gtk::TextTagTable {
     let table = gtk::TextTagTable::new();
     let tags = [
+        // Defined first so that every other tag overrides it
+        gtk::TextTag::new(Some(BASE)),
         gtk::TextTag::builder()
             .name(FILE_HEADER)
             .weight(700)
@@ -69,14 +72,42 @@ pub fn create_text_view() -> gtk::TextView {
     let buffer = gtk::TextBuffer::builder()
         .tag_table(&create_tag_table())
         .build();
-    gtk::TextView::builder()
+    let view = gtk::TextView::builder()
         .editable(false)
         .cursor_visible(false)
         .monospace(true)
         .buffer(&buffer)
         .top_margin(4)
         .bottom_margin(4)
-        .build()
+        .build();
+
+    if let Some(family) = latin_monospace_family(&view) {
+        let base = buffer.tag_table().lookup(BASE).unwrap();
+        base.set_family(Some(&family));
+    }
+    view
+}
+
+/// The font that the generic monospace family resolves to for Latin text.
+///
+/// Digits, spaces and punctuation belong to no script, so Pango draws them in
+/// the font of the text around them, or in the font of the locale on a line
+/// with nothing else, such as an empty line. In a Japanese locale that is a
+/// Japanese font with other widths, which shifts line numbers and indentation.
+/// Naming the Latin font keeps them in one font, while the characters it does
+/// not have still fall back to the other fonts.
+fn latin_monospace_family(view: &gtk::TextView) -> Option<String> {
+    let context = view.pango_context();
+    let mut desc = gtk::pango::FontDescription::new();
+    desc.set_family("monospace");
+    let fontset = context.load_fontset(&desc, &gtk::pango::Language::from_string("en"))?;
+    let font = fontset.font('0' as u32);
+    font.describe().family().map(|f| f.to_string())
+}
+
+/// Gives the whole buffer the base font. Call it after filling the buffer.
+pub fn apply_base_font(buffer: &gtk::TextBuffer) {
+    buffer.apply_tag_by_name(BASE, &buffer.start_iter(), &buffer.end_iter());
 }
 
 pub fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {

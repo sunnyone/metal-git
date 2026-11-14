@@ -75,6 +75,7 @@ impl UnifiedView {
             }
         }
 
+        text::apply_base_font(&buffer);
         self.scrolled.vadjustment().set_value(0.0);
     }
 }
