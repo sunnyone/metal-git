@@ -4,7 +4,7 @@ use gtk::{gdk, glib, graphene, pango};
 
 use super::diff_text_view::{DiffTextView, Row};
 use super::text;
-use crate::diff_model::LineKind;
+use crate::diff::LineKind;
 
 const PADDING: f32 = 6.0;
 const MIN_DIGITS: usize = 3;

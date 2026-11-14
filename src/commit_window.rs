@@ -15,7 +15,7 @@ use std::str;
 use git2::build::CheckoutBuilder;
 use git2::Error;
 
-use crate::diff_model::{self, FileDiff};
+use crate::diff::{self, FileDiff};
 use crate::diff_view::DiffViewer;
 use crate::repository_ext::RepositoryExt;
 use crate::repository_manager::RepositoryManager;
@@ -628,7 +628,7 @@ impl CommitWindow {
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(filename);
         let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
+        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
         Ok(())
     }
 
@@ -643,7 +643,7 @@ impl CommitWindow {
         let head_tree = head_tree_object.as_tree().unwrap();
 
         let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
+        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
         Ok(())
     }
 

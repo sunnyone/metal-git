@@ -3,9 +3,7 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::commit_diff_util;
-use crate::commit_diff_util::{ListCommitDiffFileEntry, ListCommitDiffResult};
-use crate::diff_model;
+use crate::diff::{self, ListCommitDiffFileEntry, ListCommitDiffResult};
 use crate::diff_view::{self, DiffViewer};
 use crate::repository_manager::RepositoryManager;
 
@@ -54,7 +52,7 @@ impl CommitDiffPanel {
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {
         let result =
-            commit_diff_util::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
+            diff::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
 
         clear_list_box(&self.diff_list_box);
 
@@ -104,8 +102,8 @@ impl CommitDiffPanel {
         let repo = self.repository_manager.open()?;
         let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
         let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
-        let diff = diff_model::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
-        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
+        let diff = diff::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
+        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
         Ok(())
     }
 }

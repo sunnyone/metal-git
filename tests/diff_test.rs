@@ -2,7 +2,7 @@ extern crate git2;
 extern crate metal_git;
 
 use git2::{DiffOptions, Patch};
-use metal_git::diff_model::{self, FileDiff, FileStatus, LineKind};
+use metal_git::diff::{self, FileDiff, FileStatus, LineKind};
 
 fn diff_buffers(old: &str, new: &str, context_lines: u32) -> FileDiff {
 	let mut opts = DiffOptions::new();
@@ -15,10 +15,10 @@ fn diff_buffers(old: &str, new: &str, context_lines: u32) -> FileDiff {
 		Some(&mut opts),
 	)
 	.unwrap();
-	diff_model::file_from_patch(&patch).unwrap()
+	diff::file_from_patch(&patch).unwrap()
 }
 
-fn emphasized<'a>(content: &'a str, line: &diff_model::DiffLine) -> Vec<&'a str> {
+fn emphasized<'a>(content: &'a str, line: &diff::DiffLine) -> Vec<&'a str> {
 	line.emphasis.iter().map(|r| &content[r.clone()]).collect()
 }
 
@@ -207,7 +207,7 @@ pub fn files_from_a_diff_mark_their_changed_words_only_when_emphasized() {
 		-let total = 1;\n\
 		+let total = 2;\n";
 	let diff = git2::Diff::from_buffer(patch.as_bytes()).unwrap();
-	let mut files = diff_model::files_from_diff(&diff).unwrap();
+	let mut files = diff::files_from_diff(&diff).unwrap();
 	let file = &mut files[0];
 
 	assert!(!file.emphasized);
@@ -233,30 +233,30 @@ pub fn line_count_adds_up_the_lines_of_every_hunk() {
 pub fn initially_open_closes_files_over_the_line_limit() {
 	let files = vec![
 		file_of_lines("small.rs", 10),
-		file_of_lines("large.rs", diff_model::MAX_OPEN_FILE_LINES + 1),
-		file_of_lines("limit.rs", diff_model::MAX_OPEN_FILE_LINES),
+		file_of_lines("large.rs", diff::MAX_OPEN_FILE_LINES + 1),
+		file_of_lines("limit.rs", diff::MAX_OPEN_FILE_LINES),
 	];
 
-	assert_eq!(vec![true, false, true], diff_model::initially_open(&files));
+	assert_eq!(vec![true, false, true], diff::initially_open(&files));
 }
 
 #[test]
 pub fn initially_open_closes_files_once_the_total_would_pass_the_limit() {
 	// Files that fill the total but for 5 lines
-	let size = diff_model::MAX_OPEN_FILE_LINES;
-	let mut sizes = vec![size; diff_model::MAX_OPEN_TOTAL_LINES / size];
+	let size = diff::MAX_OPEN_FILE_LINES;
+	let mut sizes = vec![size; diff::MAX_OPEN_TOTAL_LINES / size];
 	let filled: usize = sizes.iter().sum();
-	if diff_model::MAX_OPEN_TOTAL_LINES - filled < 5 {
+	if diff::MAX_OPEN_TOTAL_LINES - filled < 5 {
 		*sizes.last_mut().unwrap() -= 5;
 	}
-	let left = diff_model::MAX_OPEN_TOTAL_LINES - sizes.iter().sum::<usize>();
+	let left = diff::MAX_OPEN_TOTAL_LINES - sizes.iter().sum::<usize>();
 	let fitting = sizes.len();
 
 	let mut files: Vec<FileDiff> = sizes.iter().enumerate().map(|(i, &n)| file_of_lines(&format!("{}.rs", i), n)).collect();
 	files.push(file_of_lines("over.rs", left + 1));
 	files.push(file_of_lines("small.rs", left));
 
-	let open = diff_model::initially_open(&files);
+	let open = diff::initially_open(&files);
 	assert!(open[..fitting].iter().all(|&o| o));
 	assert!(!open[fitting]);
 	// A later file that still fits in what is left opens
@@ -265,9 +265,9 @@ pub fn initially_open_closes_files_once_the_total_would_pass_the_limit() {
 
 #[test]
 pub fn initially_open_always_opens_a_lone_file() {
-	let files = vec![file_of_lines("huge.rs", diff_model::MAX_OPEN_TOTAL_LINES * 2)];
+	let files = vec![file_of_lines("huge.rs", diff::MAX_OPEN_TOTAL_LINES * 2)];
 
-	assert_eq!(vec![true], diff_model::initially_open(&files));
+	assert_eq!(vec![true], diff::initially_open(&files));
 }
 
 #[test]
@@ -295,8 +295,8 @@ pub fn diff_trees_finds_renamed_files() {
 	let old = tree_of(&repo, &[("a.txt", &body), ("b.txt", &body), ("kept.txt", "kept\n")]);
 	let new = tree_of(&repo, &[("moved.txt", &body), ("c.txt", &changed), ("kept.txt", "kept\n")]);
 
-	let diff = diff_model::diff_trees(&repo, Some(&old), Some(&new)).unwrap();
-	let files = diff_model::files_from_diff(&diff).unwrap();
+	let diff = diff::diff_trees(&repo, Some(&old), Some(&new)).unwrap();
+	let files = diff::files_from_diff(&diff).unwrap();
 
 	let summary: Vec<(FileStatus, String, usize)> =
 		files.iter().map(|f| (f.status, f.display_path(), f.line_count())).collect();

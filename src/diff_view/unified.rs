@@ -6,7 +6,7 @@ use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
 use super::text::{self, FileSlot, Folds};
 use super::SharedContent;
-use crate::diff_model::FileDiff;
+use crate::diff::FileDiff;
 
 /// One column with old and new line numbers, word emphasis, and files and hunks
 /// that fold when their head line is clicked.

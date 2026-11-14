@@ -4,7 +4,7 @@ use gtk::{gdk, glib, graphene};
 use std::cell::RefCell;
 
 use super::text;
-use crate::diff_model::{DiffLine, LineKind};
+use crate::diff::{DiffLine, LineKind};
 
 /// What one line of the buffer shows, which decides its background and the
 /// line numbers beside it.

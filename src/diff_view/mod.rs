@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff_model::{self, FileDiff, FileStatus, LineKind};
+use crate::diff::{self, FileDiff, FileStatus, LineKind};
 use split::SplitView;
 use unified::UnifiedView;
 
@@ -136,10 +136,10 @@ impl DiffViewer {
     }
 
     /// Shows files, those of a large diff closed at first. See
-    /// `diff_model::initially_open`.
+    /// `diff::initially_open`.
     pub fn show_files(&self, files: Vec<FileDiff>) {
         self.summary.set_text(&summary_text(&files));
-        let open = diff_model::initially_open(&files);
+        let open = diff::initially_open(&files);
         self.content.replace(Content { files, open });
         self.render();
     }
