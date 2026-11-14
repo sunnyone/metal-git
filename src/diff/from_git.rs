@@ -18,6 +18,8 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
                     status: status_of(delta.status()),
                     binary: delta.flags().is_binary(),
                     hunks: Vec::new(),
+                    old_id: None,
+                    old_content: None,
                     emphasized: true,
                 }),
             }
@@ -61,6 +63,10 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
             header: String::from_utf8_lossy(hunk.header())
                 .trim_end()
                 .to_string(),
+            old_start: hunk.old_start(),
+            old_lines: hunk.old_lines(),
+            new_start: hunk.new_start(),
+            new_lines: hunk.new_lines(),
             lines,
             pairs: Vec::new(),
         });
@@ -72,6 +78,8 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
         status: status_of(delta.status()),
         binary: delta.flags().is_binary(),
         hunks,
+        old_id: Some(delta.old_file().id()).filter(|id| !id.is_zero()),
+        old_content: None,
         emphasized: false,
     })
 }

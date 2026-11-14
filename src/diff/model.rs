@@ -32,6 +32,14 @@ pub struct DiffLine {
 #[derive(Clone, Debug)]
 pub struct DiffHunk {
     pub header: String,
+    /// The lines of the old file the hunk covers, as git gives them: the first
+    /// line and how many, or for none, the line before them and zero. See
+    /// `DiffHunk::old_range`.
+    pub old_start: u32,
+    pub old_lines: u32,
+    /// The lines of the new file the hunk covers, as `old_start` and `old_lines`
+    pub new_start: u32,
+    pub new_lines: u32,
     pub lines: Vec<DiffLine>,
     /// Indices into `lines` of each removed line and the added line it was
     /// paired with for emphasis, in order.
@@ -140,6 +148,12 @@ pub struct FileDiff {
     pub status: FileStatus,
     pub binary: bool,
     pub hunks: Vec<DiffHunk>,
+    /// The blob of the old version, which holds the unchanged lines that the
+    /// hunks leave out
+    pub old_id: Option<git2::Oid>,
+    /// The lines of the old version, once read to reveal unchanged lines. See
+    /// `FileDiff::reveal`.
+    pub old_content: Option<Vec<String>>,
     /// Whether the changed words of the line pairs are marked yet. Marking them
     /// is left until the file is shown, as it is the costly part of a large diff.
     pub emphasized: bool,
@@ -159,7 +173,8 @@ impl FileDiff {
                 emphasis: Vec::new(),
             })
             .collect::<Vec<_>>();
-        let header = format!("@@ -0,0 +1,{} @@", lines.len());
+        let line_count = lines.len() as u32;
+        let header = format!("@@ -0,0 +1,{} @@", line_count);
 
         FileDiff {
             old_path: None,
@@ -168,9 +183,15 @@ impl FileDiff {
             binary: false,
             hunks: vec![DiffHunk {
                 header,
+                old_start: 0,
+                old_lines: 0,
+                new_start: 1,
+                new_lines: line_count,
                 lines,
                 pairs: Vec::new(),
             }],
+            old_id: None,
+            old_content: None,
             emphasized: true,
         }
     }

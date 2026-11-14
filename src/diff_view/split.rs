@@ -5,15 +5,16 @@ use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds};
+use super::text::{self, FileSlot, Folds, Links, RevealFileGap, RevealGap};
 use super::SharedContent;
-use crate::diff::{DiffLine, FileDiff};
+use crate::diff::{DiffLine, FileDiff, Gap};
 
 /// One side of a split view.
 struct Side {
     view: DiffTextView,
     scrolled: gtk::ScrolledWindow,
     folds: Rc<Folds>,
+    links: Rc<Links>,
     gutter: LineNumberGutter,
 }
 
@@ -26,17 +27,20 @@ impl Side {
             scrolled.set_vadjustment(Some(vadjustment));
         }
         let folds = Folds::new(view.upcast_ref());
+        let links = Links::new(view.upcast_ref());
         let gutter = LineNumberGutter::attach(&view, columns);
         Side {
             view,
             scrolled,
             folds,
+            links,
             gutter,
         }
     }
 
     fn clear(&self) {
         self.folds.clear();
+        self.links.clear();
         self.view.buffer().set_text("");
     }
 
@@ -63,6 +67,34 @@ impl Side {
         rows.set(iter, Row::line(line));
         text::insert_content(&buffer, iter, line, &tags);
         start
+    }
+
+    /// Inserts the line that stands for a gap.
+    fn insert_gap(
+        &self,
+        iter: &mut gtk::TextIter,
+        rows: &mut RowRecorder,
+        gap: &Gap,
+        hunk_count: usize,
+        file_body: &str,
+        reveal: &RevealGap,
+    ) {
+        rows.set(iter, Row::Gap);
+        text::insert_gap(
+            &self.links,
+            iter,
+            gap,
+            hunk_count,
+            &[text::FILE_BODY, file_body],
+            reveal,
+        );
+    }
+
+    /// Deletes the lines of a file, so that they can be inserted again.
+    fn delete_file_body(&self, slot: &FileSlot, next: Option<&FileSlot>) {
+        let deleted = text::delete_file_body(&self.view.buffer(), slot, next);
+        self.view.remove_rows(deleted);
+        self.links.forget_deleted();
     }
 
     /// Adds space below a line of the buffer.
@@ -166,6 +198,7 @@ pub struct SplitView {
     /// add their folds in the same order, so that a fold has the same index on
     /// both.
     slots: RefCell<Vec<(FileSlot, FileSlot)>>,
+    reveal: RefCell<Option<RevealFileGap>>,
 }
 
 impl SplitView {
@@ -191,6 +224,7 @@ impl SplitView {
             new,
             content,
             slots: RefCell::new(Vec::new()),
+            reveal: RefCell::new(None),
         });
 
         let w = Rc::downgrade(&split);
@@ -212,6 +246,35 @@ impl SplitView {
 
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
+    }
+
+    /// Sets what reveals unchanged lines when a link of a gap is clicked. The
+    /// caller changes the file and draws it again with `reload_file`.
+    pub fn connect_reveal(&self, reveal: RevealFileGap) {
+        self.reveal.replace(Some(reveal));
+    }
+
+    /// Draws the lines of a file again on both sides, after they changed,
+    /// keeping the lines above in place.
+    pub fn reload_file(&self, file_index: usize) {
+        let adjustment = self.old.scrolled.vadjustment();
+        let value = adjustment.value();
+        {
+            let mut slots = self.slots.borrow_mut();
+            match slots.get(file_index) {
+                Some((slot, _)) if slot.loaded => {}
+                _ => return,
+            }
+            let (old_slot, new_slot) = &slots[file_index];
+            let next = slots.get(file_index + 1);
+            self.old.delete_file_body(old_slot, next.map(|s| &s.0));
+            self.new.delete_file_body(new_slot, next.map(|s| &s.1));
+            let (old_slot, new_slot) = &mut slots[file_index];
+            old_slot.loaded = false;
+            new_slot.loaded = false;
+        }
+        self.load(file_index);
+        text::restore_scroll(&adjustment, value);
     }
 
     pub fn show(&self) {
@@ -237,7 +300,7 @@ impl SplitView {
 
         let mut content = self.content.borrow_mut();
         let content = &mut *content;
-        for (file, &open) in content.files.iter_mut().zip(&content.open) {
+        for (file_index, (file, &open)) in content.files.iter_mut().zip(&content.open).enumerate() {
             let mut old_slot = self
                 .old
                 .insert_file_head(&mut old_iter, &mut old_rows, file, open);
@@ -250,6 +313,7 @@ impl SplitView {
                     (&mut old_iter, &mut new_iter),
                     (&mut old_rows, &mut new_rows),
                     &heights,
+                    file_index,
                     file,
                     (&old_slot.body, &new_slot.body),
                 );
@@ -325,6 +389,7 @@ impl SplitView {
             (&mut old_iter, &mut new_iter),
             (&mut old_rows, &mut new_rows),
             &heights,
+            file_index,
             file,
             (&old_slot.body, &new_slot.body),
         );
@@ -340,6 +405,7 @@ impl SplitView {
         iters: (&mut gtk::TextIter, &mut gtk::TextIter),
         rows: (&mut RowRecorder, &mut RowRecorder),
         heights: &(LineHeights, LineHeights),
+        file_index: usize,
         file: &FileDiff,
         file_bodies: (&str, &str),
     ) {
@@ -366,7 +432,29 @@ impl SplitView {
             return;
         }
 
-        for hunk in &file.hunks {
+        let reveal = self
+            .reveal
+            .borrow()
+            .as_ref()
+            .map(|reveal| text::reveal_gap_of(reveal, file_index));
+        let gaps = file.gaps();
+        let insert_gap = |old_iter: &mut gtk::TextIter,
+                          new_iter: &mut gtk::TextIter,
+                          old_rows: &mut RowRecorder,
+                          new_rows: &mut RowRecorder,
+                          before_hunk| {
+            let gap = gaps.iter().find(|gap| gap.before_hunk == before_hunk);
+            if let (Some(gap), Some(reveal)) = (gap, &reveal) {
+                let hunk_count = file.hunks.len();
+                self.old
+                    .insert_gap(old_iter, old_rows, gap, hunk_count, old_file_body, reveal);
+                self.new
+                    .insert_gap(new_iter, new_rows, gap, hunk_count, new_file_body, reveal);
+            }
+        };
+
+        for (hunk_index, hunk) in file.hunks.iter().enumerate() {
+            insert_gap(old_iter, new_iter, old_rows, new_rows, hunk_index);
             old_rows.set(old_iter, Row::HunkHeader);
             new_rows.set(new_iter, Row::HunkHeader);
             let old_body = self.old.folds.insert_head(
@@ -405,5 +493,6 @@ impl SplitView {
                 }
             }
         }
+        insert_gap(old_iter, new_iter, old_rows, new_rows, file.hunks.len());
     }
 }

@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::diff_text_view::DiffTextView;
-use crate::diff::{DiffLine, FileDiff, FileStatus, LineKind};
+use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, LineKind, Reveal};
 
 const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";
@@ -17,10 +17,14 @@ pub const NOTE: &str = "note";
 const NOTE_COUNTS: &str = "note-counts";
 /// Carried by the lines of a file below its head line, which it indents
 pub const FILE_BODY: &str = "file-body";
+/// The line that stands for unchanged lines left out of a diff
+const GAP: &str = "gap";
+const LINK: &str = "link";
 
 // Translucent so that they read well on light and dark themes
 pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
 pub const HUNK_HEADER_BACKGROUND: &str = "rgba(90,140,255,0.12)";
+pub const GAP_BACKGROUND: &str = "rgba(90,140,255,0.06)";
 pub const ADDED_BACKGROUND: &str = "rgba(46,160,67,0.16)";
 pub const REMOVED_BACKGROUND: &str = "rgba(248,81,73,0.16)";
 pub const FILLER_BACKGROUND: &str = "rgba(127,127,127,0.10)";
@@ -58,6 +62,15 @@ fn create_tag_table() -> gtk::TextTagTable {
             .name(NOTE)
             .foreground("rgba(127,127,127,1)")
             .style(gtk::pango::Style::Italic)
+            .build(),
+        gtk::TextTag::builder()
+            .name(GAP)
+            .foreground("rgba(127,127,127,1)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(LINK)
+            .foreground("rgba(70,120,220,1)")
+            .underline(gtk::pango::Underline::Single)
             .build(),
         gtk::TextTag::builder()
             .name(NOTE_COUNTS)
@@ -306,6 +319,101 @@ pub fn file_body_iter(buffer: &gtk::TextBuffer, slot: &FileSlot) -> gtk::TextIte
     iter
 }
 
+/// Deletes the lines of a file, so that they can be inserted again, and
+/// returns the range of lines they took. `next` is the slot of the file after.
+pub fn delete_file_body(
+    buffer: &gtk::TextBuffer,
+    slot: &FileSlot,
+    next: Option<&FileSlot>,
+) -> std::ops::Range<usize> {
+    let mut start = file_body_iter(buffer, slot);
+    let mut end = match next {
+        Some(next) => buffer.iter_at_mark(&next.head),
+        None => buffer.end_iter(),
+    };
+    let lines = start.line() as usize..end.line() as usize;
+    buffer.delete(&mut start, &mut end);
+    lines
+}
+
+/// Scrolls a view back to where it was before its lines changed, so that the
+/// lines above the change stay in place. The layout of the changed lines
+/// finishes later, so it scrolls back once more then.
+pub fn restore_scroll(adjustment: &gtk::Adjustment, value: f64) {
+    adjustment.set_value(value);
+    let adjustment = adjustment.clone();
+    gtk::glib::idle_add_local_once(move || adjustment.set_value(value));
+}
+
+/// How many unchanged lines a link reveals at a time.
+const REVEAL_STEP: u32 = 10;
+
+/// Called with the index of a hunk, as a `Gap` gives it, and which lines of
+/// the gap before it to reveal.
+pub type RevealGap = Rc<dyn Fn(usize, Reveal)>;
+
+/// Called with the index of a file as well as what `RevealGap` gets.
+pub type RevealFileGap = Rc<dyn Fn(usize, usize, Reveal)>;
+
+/// The `RevealGap` of one file.
+pub fn reveal_gap_of(handler: &RevealFileGap, file_index: usize) -> RevealGap {
+    let handler = handler.clone();
+    Rc::new(move |before_hunk, how| handler(file_index, before_hunk, how))
+}
+
+/// Inserts the line that stands for a gap of a file with `hunk_count` hunks:
+/// how many lines it has, and links that reveal them.
+pub fn insert_gap(
+    links: &Links,
+    iter: &mut gtk::TextIter,
+    gap: &Gap,
+    hunk_count: usize,
+    tags: &[&str],
+    reveal: &RevealGap,
+) {
+    let buffer = iter.buffer();
+    let mut gap_tags = tags.to_vec();
+    gap_tags.push(GAP);
+    let label = match gap.count {
+        Some(1) => "⋯ 1 unchanged line".to_string(),
+        Some(count) => format!("⋯ {} unchanged lines", count),
+        None => "⋯ More lines".to_string(),
+    };
+    insert(&buffer, iter, &label, &gap_tags);
+
+    // The gap before the first hunk has no hunk above, and the gap after the
+    // last has none below
+    let is_first = gap.before_hunk == 0;
+    let is_last = gap.before_hunk == hunk_count;
+    let few = gap.count.is_some_and(|count| count <= REVEAL_STEP);
+    let mut add_link = |label: &str, tooltip: &str, how: Reveal| {
+        insert(&buffer, iter, "   ", &gap_tags);
+        let reveal = reveal.clone();
+        let before_hunk = gap.before_hunk;
+        links.insert(iter, label, &gap_tags, tooltip, move || {
+            reveal(before_hunk, how)
+        });
+    };
+    if !few {
+        if !is_first {
+            add_link(
+                &format!("▼ {}", REVEAL_STEP),
+                "Show more lines below the code above",
+                Reveal::Down(REVEAL_STEP),
+            );
+        }
+        if !is_last {
+            add_link(
+                &format!("▲ {}", REVEAL_STEP),
+                "Show more lines above the code below",
+                Reveal::Up(REVEAL_STEP),
+            );
+        }
+    }
+    add_link("Show all", "Show all the hidden lines here", Reveal::All);
+    insert(&buffer, iter, "\n", &gap_tags);
+}
+
 /// Hides the lines of a closed fold. An open one leaves their visibility unset
 /// rather than visible, so that a closed fold around it, such as a file around
 /// a hunk, still hides them whatever the priorities of the tags.
@@ -464,8 +572,9 @@ impl Folds {
 
         let buffer = self.view.buffer();
         let mut start = buffer.start_iter();
-        if !start.starts_tag(Some(&fold.head)) {
-            start.forward_to_tag_toggle(Some(&fold.head));
+        // The head line is gone once the lines of its file are drawn again
+        if !start.starts_tag(Some(&fold.head)) && !start.forward_to_tag_toggle(Some(&fold.head)) {
+            return;
         }
         let mut end = start;
         end.forward_char();
@@ -473,5 +582,140 @@ impl Folds {
         let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
         let tag_refs: Vec<&str> = fold.head_tags.iter().map(|t| t.as_str()).collect();
         insert(&buffer, &mut start, marker, &tag_refs);
+    }
+}
+
+struct Link {
+    tag: gtk::TextTag,
+    tooltip: String,
+    action: Rc<dyn Fn()>,
+}
+
+/// Clickable spans of a text view, each running an action, with a tooltip.
+pub struct Links {
+    view: gtk::TextView,
+    links: RefCell<Vec<Link>>,
+}
+
+impl Links {
+    pub fn new(view: &gtk::TextView) -> Rc<Links> {
+        let links = Rc::new(Links {
+            view: view.clone(),
+            links: RefCell::new(Vec::new()),
+        });
+
+        let click = gtk::GestureClick::new();
+        let w = Rc::downgrade(&links);
+        click.connect_released(move |_, _, x, y| {
+            let Some(links) = w.upgrade() else {
+                return;
+            };
+            // Cloned out first, as the action redraws the lines and their links
+            let action = links.find(x, y, |link| link.action.clone());
+            if let Some(action) = action {
+                action();
+            }
+        });
+        view.add_controller(click);
+
+        let motion = gtk::EventControllerMotion::new();
+        let w = Rc::downgrade(&links);
+        motion.connect_motion(move |_, x, y| {
+            if let Some(links) = w.upgrade() {
+                let over = links.find(x, y, |_| ()).is_some();
+                links
+                    .view
+                    .set_cursor_from_name(Some(if over { "pointer" } else { "text" }));
+            }
+        });
+        view.add_controller(motion);
+
+        view.set_has_tooltip(true);
+        let w = Rc::downgrade(&links);
+        view.connect_query_tooltip(move |_, x, y, _, tooltip| {
+            let Some(links) = w.upgrade() else {
+                return false;
+            };
+            match links.find(x as f64, y as f64, |link| link.tooltip.clone()) {
+                Some(text) => {
+                    tooltip.set_text(Some(&text));
+                    true
+                }
+                None => false,
+            }
+        });
+
+        links
+    }
+
+    /// Forgets the links of the previous content. Call it before clearing the buffer.
+    pub fn clear(&self) {
+        let table = self.view.buffer().tag_table();
+        for link in self.links.borrow_mut().drain(..) {
+            table.remove(&link.tag);
+        }
+    }
+
+    /// Forgets the links whose text was deleted.
+    pub fn forget_deleted(&self) {
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        self.links.borrow_mut().retain(|link| {
+            let mut iter = buffer.start_iter();
+            let present =
+                iter.starts_tag(Some(&link.tag)) || iter.forward_to_tag_toggle(Some(&link.tag));
+            if !present {
+                table.remove(&link.tag);
+            }
+            present
+        });
+    }
+
+    pub fn insert(
+        &self,
+        iter: &mut gtk::TextIter,
+        label: &str,
+        tags: &[&str],
+        tooltip: &str,
+        action: impl Fn() + 'static,
+    ) {
+        let buffer = self.view.buffer();
+        let mut links = self.links.borrow_mut();
+        // Numbered past any link already in the table, as links are forgotten
+        // when their lines are redrawn
+        let mut index = links.len();
+        while buffer
+            .tag_table()
+            .lookup(&format!("link-{}", index))
+            .is_some()
+        {
+            index += 1;
+        }
+        let tag = gtk::TextTag::new(Some(&format!("link-{}", index)));
+        buffer.tag_table().add(&tag);
+
+        let tag_name = tag.name().unwrap().to_string();
+        let mut all_tags = tags.to_vec();
+        all_tags.push(LINK);
+        all_tags.push(&tag_name);
+        insert(&buffer, iter, label, &all_tags);
+
+        links.push(Link {
+            tag,
+            tooltip: tooltip.to_string(),
+            action: Rc::new(action),
+        });
+    }
+
+    fn find<T>(&self, x: f64, y: f64, get: impl Fn(&Link) -> T) -> Option<T> {
+        let (bx, by) =
+            self.view
+                .window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
+        let iter = self.view.iter_at_location(bx, by)?;
+        self.links
+            .borrow()
+            .iter()
+            .find(|l| iter.has_tag(&l.tag))
+            .map(get)
     }
 }
