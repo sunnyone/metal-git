@@ -128,3 +128,68 @@ pub fn all_added_numbers_every_line_as_new() {
 	assert!(lines.iter().all(|l| l.kind == LineKind::Added && l.old_lineno.is_none()));
 	assert_eq!(Some(2), lines[1].new_lineno);
 }
+
+fn side_by_side_contents(file: &FileDiff) -> Vec<(Option<&str>, Option<&str>)> {
+	file.hunks[0]
+		.side_by_side()
+		.into_iter()
+		.map(|(old, new)| (old.map(|l| l.content.as_str()), new.map(|l| l.content.as_str())))
+		.collect()
+}
+
+#[test]
+pub fn side_by_side_puts_context_lines_on_both_sides() {
+	let file = diff_buffers("a\nb\nc\n", "a\nB\nc\n", 3);
+
+	assert_eq!(
+		vec![(Some("a"), Some("a")), (Some("b"), Some("B")), (Some("c"), Some("c"))],
+		side_by_side_contents(&file)
+	);
+}
+
+#[test]
+pub fn side_by_side_puts_paired_lines_on_one_row() {
+	let file = diff_buffers("let a = price * 2;\n", "// Double the price\nlet a = price * 3;\n", 3);
+
+	assert_eq!(
+		vec![
+			(None, Some("// Double the price")),
+			(Some("let a = price * 2;"), Some("let a = price * 3;")),
+		],
+		side_by_side_contents(&file)
+	);
+}
+
+#[test]
+pub fn side_by_side_fills_rows_in_order_between_pairs() {
+	let file = diff_buffers("fn a() {}\nlet x = 1;\n", "struct P;\nenum Q {}\nlet x = 10;\nconst R: u8 = 0;\n", 3);
+
+	assert_eq!(
+		vec![
+			(Some("fn a() {}"), Some("struct P;")),
+			(None, Some("enum Q {}")),
+			(Some("let x = 1;"), Some("let x = 10;")),
+			(None, Some("const R: u8 = 0;")),
+		],
+		side_by_side_contents(&file)
+	);
+}
+
+#[test]
+pub fn side_by_side_keeps_every_line_once() {
+	let old: String = (1..=30).map(|i| format!("line {}\n", i)).collect();
+	let new = old
+		.replace("line 3\n", "")
+		.replace("line 10\n", "line ten\nextra\n")
+		.replace("line 20\n", "line 20 changed\n");
+	let file = diff_buffers(&old, &new, 3);
+
+	for hunk in &file.hunks {
+		let rows = hunk.side_by_side();
+		let olds = rows.iter().filter(|(old, _)| old.is_some()).count();
+		let news = rows.iter().filter(|(_, new)| new.is_some()).count();
+		let removed = hunk.lines.iter().filter(|l| l.kind != LineKind::Added).count();
+		let added = hunk.lines.iter().filter(|l| l.kind != LineKind::Removed).count();
+		assert_eq!((removed, added), (olds, news));
+	}
+}

@@ -12,7 +12,7 @@ use crate::repository_manager::RepositoryManager;
 pub struct CommitDiffPanel {
     paned: gtk::Paned,
     diff_list_box: gtk::ListBox,
-    diff_viewer: DiffViewer,
+    diff_viewer: Rc<DiffViewer>,
     repository_manager: Rc<RepositoryManager>,
     current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>,
 }

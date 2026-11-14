@@ -19,6 +19,7 @@ pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
 pub const HUNK_HEADER_BACKGROUND: &str = "rgba(90,140,255,0.12)";
 pub const ADDED_BACKGROUND: &str = "rgba(46,160,67,0.16)";
 pub const REMOVED_BACKGROUND: &str = "rgba(248,81,73,0.16)";
+pub const FILLER_BACKGROUND: &str = "rgba(127,127,127,0.10)";
 pub const LINENO_COLOR: &str = "rgba(127,127,127,0.85)";
 
 const OPEN_MARKER: &str = "▾";
@@ -89,13 +90,23 @@ pub fn create_text_view() -> DiffTextView {
 /// Japanese font with other widths, which shifts indentation and columns.
 /// Naming the Latin font keeps them in one font, while the characters it does
 /// not have still fall back to the other fonts.
-pub fn latin_monospace_family(view: &gtk::TextView) -> Option<String> {
+fn latin_monospace_family(view: &gtk::TextView) -> Option<String> {
     let context = view.pango_context();
     let mut desc = gtk::pango::FontDescription::new();
     desc.set_family("monospace");
     let fontset = context.load_fontset(&desc, &gtk::pango::Language::from_string("en"))?;
     let font = fontset.font('0' as u32);
     font.describe().family().map(|f| f.to_string())
+}
+
+/// The font the text of the view is drawn in, apart from the characters that
+/// fall back to other fonts.
+pub fn text_font(view: &gtk::TextView) -> gtk::pango::FontDescription {
+    let mut font = view.pango_context().font_description().unwrap_or_default();
+    if let Some(family) = latin_monospace_family(view) {
+        font.set_family(&family);
+    }
+    font
 }
 
 /// Gives the whole buffer the base font. Call it after filling the buffer.
@@ -171,10 +182,14 @@ struct Fold {
     head_tags: Vec<String>,
 }
 
+/// Called with the index of a fold and whether it is now open.
+type ToggledCallback = Box<dyn Fn(usize, bool)>;
+
 /// Sections of a text view that open and close when their head line is clicked.
 pub struct Folds {
     view: gtk::TextView,
     folds: RefCell<Vec<Fold>>,
+    on_toggled: RefCell<Option<ToggledCallback>>,
 }
 
 impl Folds {
@@ -182,6 +197,7 @@ impl Folds {
         let folds = Rc::new(Folds {
             view: view.clone(),
             folds: RefCell::new(Vec::new()),
+            on_toggled: RefCell::new(None),
         });
 
         let click = gtk::GestureClick::new();
@@ -194,6 +210,12 @@ impl Folds {
         view.add_controller(click);
 
         folds
+    }
+
+    /// Calls `callback` with the index of a fold and whether it is now open,
+    /// whenever a click opens or closes it.
+    pub fn connect_toggled(&self, callback: impl Fn(usize, bool) + 'static) {
+        self.on_toggled.replace(Some(Box::new(callback)));
     }
 
     /// Forgets the folds of the previous content. Call it before clearing the buffer.
@@ -252,18 +274,38 @@ impl Folds {
             return;
         };
 
-        let folds = self.folds.borrow();
-        let Some(fold) = folds.iter().find(|f| iter.has_tag(&f.head)) else {
+        let found = self
+            .folds
+            .borrow()
+            .iter()
+            .enumerate()
+            .find(|(_, f)| iter.has_tag(&f.head))
+            .map(|(index, f)| (index, f.body.is_invisible()));
+        let Some((index, open)) = found else {
             return;
         };
 
-        let open = fold.body.is_invisible();
+        self.set_open(index, open);
+        if let Some(callback) = self.on_toggled.borrow().as_ref() {
+            callback(index, open);
+        }
+    }
+
+    /// Opens or closes a fold, without notifying `connect_toggled`.
+    pub fn set_open(&self, index: usize, open: bool) {
+        let folds = self.folds.borrow();
+        let Some(fold) = folds.get(index) else {
+            return;
+        };
+        if fold.body.is_invisible() != open {
+            return;
+        }
         fold.body.set_invisible(!open);
 
         let buffer = self.view.buffer();
-        let mut start = iter;
+        let mut start = buffer.start_iter();
         if !start.starts_tag(Some(&fold.head)) {
-            start.backward_to_tag_toggle(Some(&fold.head));
+            start.forward_to_tag_toggle(Some(&fold.head));
         }
         let mut end = start;
         end.forward_char();

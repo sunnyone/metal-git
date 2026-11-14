@@ -1,8 +1,8 @@
 use gtk::prelude::*;
 use std::rc::Rc;
 
-use super::diff_text_view::{DiffTextView, Row};
-use super::gutter::LineNumberGutter;
+use super::diff_text_view::{DiffTextView, Row, RowRecorder};
+use super::gutter::{Columns, LineNumberGutter};
 use super::text::{self, Folds};
 use crate::diff_model::FileDiff;
 
@@ -20,7 +20,7 @@ impl UnifiedView {
         let view = text::create_text_view();
         let scrolled = text::scrolled(&view);
         let folds = Folds::new(view.upcast_ref());
-        let gutter = LineNumberGutter::attach(&view);
+        let gutter = LineNumberGutter::attach(&view, Columns::Both);
         UnifiedView {
             view,
             scrolled,
@@ -38,19 +38,10 @@ impl UnifiedView {
         self.folds.clear();
         buffer.set_text("");
         let mut iter = buffer.start_iter();
-        // Recorded by the line each one starts on, as a line can hold a
-        // character that the buffer treats as a line break, such as a lone CR
-        let mut rows = Vec::new();
-        let mut set_row = |iter: &gtk::TextIter, row: Row| {
-            let line = iter.line() as usize;
-            if rows.len() <= line {
-                rows.resize(line + 1, Row::Blank);
-            }
-            rows[line] = row;
-        };
+        let mut rows = RowRecorder::default();
 
         for file in files {
-            set_row(&iter, Row::FileHeader);
+            rows.set(&iter, Row::FileHeader);
             text::insert(
                 &buffer,
                 &mut iter,
@@ -63,7 +54,7 @@ impl UnifiedView {
             }
 
             for hunk in &file.hunks {
-                set_row(&iter, Row::HunkHeader);
+                rows.set(&iter, Row::HunkHeader);
                 let body =
                     self.folds
                         .insert_head(&mut iter, &hunk.header, &[text::HUNK_HEADER], true);
@@ -73,14 +64,14 @@ impl UnifiedView {
                     let mut tags = vec![body.as_str()];
                     tags.extend(line_tag);
 
-                    set_row(&iter, Row::line(line));
+                    rows.set(&iter, Row::line(line));
                     text::insert_content(&buffer, &mut iter, line, &tags);
                 }
             }
         }
 
         text::apply_base_font(&buffer);
-        self.view.set_rows(rows);
+        self.view.set_rows(rows.into_rows());
         self.gutter.refresh();
         self.scrolled.vadjustment().set_value(0.0);
     }

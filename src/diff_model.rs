@@ -32,6 +32,70 @@ pub struct DiffLine {
 pub struct DiffHunk {
     pub header: String,
     pub lines: Vec<DiffLine>,
+    /// Indices into `lines` of each removed line and the added line it was
+    /// paired with for emphasis, in order.
+    pub pairs: Vec<(usize, usize)>,
+}
+
+/// A row of the old and the new side, either of which can be empty.
+pub type SideBySideRow<'a> = (Option<&'a DiffLine>, Option<&'a DiffLine>);
+
+impl DiffHunk {
+    /// The lines as rows of an old and a new side. Context lines fill both
+    /// sides. In a run of changes, paired lines share a row, and the lines
+    /// between pairs fill the rows in order.
+    pub fn side_by_side(&self) -> Vec<SideBySideRow<'_>> {
+        let lines = &self.lines;
+        let mut rows = Vec::with_capacity(lines.len());
+        let mut pairs = self.pairs.iter().peekable();
+
+        let mut i = 0;
+        while i < lines.len() {
+            if lines[i].kind == LineKind::Context {
+                rows.push((Some(&lines[i]), Some(&lines[i])));
+                i += 1;
+                continue;
+            }
+
+            let start = i;
+            while i < lines.len() && lines[i].kind != LineKind::Context {
+                i += 1;
+            }
+            let of_kind =
+                |kind| -> Vec<usize> { (start..i).filter(|&k| lines[k].kind == kind).collect() };
+            let removed = of_kind(LineKind::Removed);
+            let added = of_kind(LineKind::Added);
+
+            let (mut r, mut a) = (0, 0);
+            while let Some(&&(pair_r, pair_a)) = pairs.peek() {
+                if pair_r >= i {
+                    break;
+                }
+                pairs.next();
+                let pair_r = removed.iter().position(|&l| l == pair_r).unwrap();
+                let pair_a = added.iter().position(|&l| l == pair_a).unwrap();
+                push_zipped(&mut rows, lines, &removed[r..pair_r], &added[a..pair_a]);
+                rows.push((Some(&lines[removed[pair_r]]), Some(&lines[added[pair_a]])));
+                r = pair_r + 1;
+                a = pair_a + 1;
+            }
+            push_zipped(&mut rows, lines, &removed[r..], &added[a..]);
+        }
+        rows
+    }
+}
+
+fn push_zipped<'a>(
+    rows: &mut Vec<SideBySideRow<'a>>,
+    lines: &'a [DiffLine],
+    removed: &[usize],
+    added: &[usize],
+) {
+    for k in 0..removed.len().max(added.len()) {
+        let old = removed.get(k).map(|&l| &lines[l]);
+        let new = added.get(k).map(|&l| &lines[l]);
+        rows.push((old, new));
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +138,11 @@ impl FileDiff {
             new_path: Some(path.to_string()),
             status: FileStatus::Added,
             binary: false,
-            hunks: vec![DiffHunk { header, lines }],
+            hunks: vec![DiffHunk {
+                header,
+                lines,
+                pairs: Vec::new(),
+            }],
         }
     }
 
@@ -140,12 +208,13 @@ pub fn file_from_patch(patch: &Patch) -> Result<FileDiff, Error> {
             });
         }
 
-        emphasize_changes(&mut lines);
+        let pairs = emphasize_changes(&mut lines);
         hunks.push(DiffHunk {
             header: String::from_utf8_lossy(hunk.header())
                 .trim_end()
                 .to_string(),
             lines,
+            pairs,
         });
     }
 
@@ -160,7 +229,9 @@ pub fn file_from_patch(patch: &Patch) -> Result<FileDiff, Error> {
 
 /// Pairs the lines of each run of removed lines with those of the run of added
 /// lines right after it, and marks the words that differ within each pair.
-pub fn emphasize_changes(lines: &mut [DiffLine]) {
+/// Returns the indices of the pairs in order.
+pub fn emphasize_changes(lines: &mut [DiffLine]) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let removed_start = i;
@@ -183,19 +254,22 @@ pub fn emphasize_changes(lines: &mut [DiffLine]) {
         for (r, a, (old, new)) in pair_lines(&removed, &added) {
             lines[removed_start + r].emphasis = old;
             lines[added_start + a].emphasis = new;
+            pairs.push((removed_start + r, added_start + a));
         }
 
         if i == removed_start {
             i += 1;
         }
     }
+    pairs
 }
 
 type RangePair = (Vec<Range<usize>>, Vec<Range<usize>>);
 
 /// Pairs removed lines with added lines, keeping their order, so that the pairs
 /// are as similar as possible in total. Lines without a similar enough partner
-/// are left out. Returns the indices of each pair with its changed ranges.
+/// are left out. Returns the indices of each pair with its changed ranges, in
+/// order.
 fn pair_lines(removed: &[&str], added: &[&str]) -> Vec<(usize, usize, RangePair)> {
     let (n, m) = (removed.len(), added.len());
     if n * m > MAX_ALIGNED_PAIRS {
@@ -236,6 +310,7 @@ fn pair_lines(removed: &[&str], added: &[&str]) -> Vec<(usize, usize, RangePair)
             a -= 1;
         }
     }
+    pairs.reverse();
     pairs
 }
 
