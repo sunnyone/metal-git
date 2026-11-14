@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::diff::{self, ListCommitDiffFileEntry, ListCommitDiffResult};
+use crate::line_notes;
 use crate::diff_view::{self, DiffViewer};
 use crate::repository_manager::RepositoryManager;
 
@@ -31,7 +32,10 @@ impl CommitDiffPanel {
             .build();
         paned.set_start_child(Some(&list_scrolled));
 
-        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
+        let diff_viewer = DiffViewer::new(
+            diff::old_content_reader(&repository_manager),
+            line_notes::notes_path_of(&repository_manager),
+        );
         paned.set_end_child(Some(&diff_viewer.widget()));
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {

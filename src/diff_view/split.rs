@@ -5,9 +5,12 @@ use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds, Links, RevealFileGap, RevealGap, ToggleViewed};
+use super::text::{
+    self, ChangeNote, FileSlot, Folds, Links, RequestNote, RevealFileGap, RevealGap, ToggleViewed,
+};
 use super::SharedContent;
-use crate::diff::{DiffLine, FileDiff, Gap};
+use crate::diff::{DiffLine, FileDiff, Gap, LineKind};
+use crate::line_notes::{self, LineNote};
 
 /// One side of a split view.
 struct Side {
@@ -50,6 +53,7 @@ impl Side {
         &self,
         iter: &mut gtk::TextIter,
         rows: &mut RowRecorder,
+        file_index: usize,
         line: Option<&DiffLine>,
         bodies: &[&str],
     ) -> i32 {
@@ -64,8 +68,33 @@ impl Side {
         let (line_tag, _) = text::line_tags(line.kind);
         let mut tags = bodies.to_vec();
         tags.extend(line_tag);
-        rows.set(iter, Row::line(line));
+        rows.set(iter, Row::line(file_index, line));
         text::insert_content(&buffer, iter, line, &tags);
+        start
+    }
+
+    /// Inserts the line of a note, or a filler for a note on the other side,
+    /// and returns the line of the buffer it starts on.
+    fn insert_note(
+        &self,
+        iter: &mut gtk::TextIter,
+        rows: &mut RowRecorder,
+        file_index: usize,
+        note: Option<&LineNote>,
+        bodies: &[&str],
+        change: &ChangeNote,
+    ) -> i32 {
+        let start = iter.line();
+        match note {
+            Some(note) => {
+                rows.set(iter, Row::Note { done: note.done });
+                text::insert_line_note(&self.links, iter, file_index, note, bodies, change);
+            }
+            None => {
+                rows.set(iter, Row::Filler);
+                text::insert(&self.view.buffer(), iter, "\n", bodies);
+            }
+        }
         start
     }
 
@@ -182,8 +211,16 @@ impl LineHeights {
     }
 
     fn of(&self, line: Option<&DiffLine>) -> i32 {
-        match line {
-            Some(line) if !line.content.is_ascii() => self.measure(&line.content),
+        self.of_text(line.map(|line| line.content.as_str()))
+    }
+
+    fn of_note(&self, note: Option<&LineNote>) -> i32 {
+        self.of_text(note.map(|note| note.text.as_str()))
+    }
+
+    fn of_text(&self, text: Option<&str>) -> i32 {
+        match text {
+            Some(text) if !text.is_ascii() => self.measure(text),
             _ => self.plain,
         }
     }
@@ -194,6 +231,14 @@ impl LineHeights {
         // Rounded to the nearest pixel, as GtkTextView rounds a line's height
         (layout.size().1 + pango::SCALE / 2) / pango::SCALE
     }
+}
+
+/// A file to insert the lines of: its index among the files shown, and the
+/// notes that may be on its lines.
+struct FileToInsert<'a> {
+    index: usize,
+    file: &'a FileDiff,
+    notes: &'a [LineNote],
 }
 
 /// The old version on the left and the new one on the right, row by row.
@@ -209,6 +254,8 @@ pub struct SplitView {
     slots: RefCell<Vec<(FileSlot, FileSlot)>>,
     reveal: RefCell<Option<RevealFileGap>>,
     toggle_viewed: RefCell<Option<ToggleViewed>>,
+    request_note: RefCell<Option<RequestNote>>,
+    change_note: RefCell<Option<ChangeNote>>,
 }
 
 impl SplitView {
@@ -236,7 +283,17 @@ impl SplitView {
             slots: RefCell::new(Vec::new()),
             reveal: RefCell::new(None),
             toggle_viewed: RefCell::new(None),
+            request_note: RefCell::new(None),
+            change_note: RefCell::new(None),
         });
+
+        for view in [&split.old.view, &split.new.view] {
+            let w = Rc::downgrade(&split);
+            text::connect_request_note(view, move || {
+                w.upgrade()
+                    .and_then(|split| split.request_note.borrow().clone())
+            });
+        }
 
         let w = Rc::downgrade(&split);
         split.old.folds.connect_toggled(move |index, open| {
@@ -269,6 +326,14 @@ impl SplitView {
     /// shows the change with `set_file_viewed`.
     pub fn connect_toggle_viewed(&self, toggle_viewed: ToggleViewed) {
         self.toggle_viewed.replace(Some(toggle_viewed));
+    }
+
+    /// Sets what runs when a line is right-clicked to leave a note on it, and
+    /// when a link of a note is clicked. The caller changes the notes and
+    /// draws the file again with `reload_file`.
+    pub fn connect_notes(&self, request: RequestNote, change: ChangeNote) {
+        self.request_note.replace(Some(request));
+        self.change_note.replace(Some(change));
     }
 
     /// Shows whether a file is viewed on both sides, and closes it when it is,
@@ -360,8 +425,11 @@ impl SplitView {
                     (&mut old_iter, &mut new_iter),
                     (&mut old_rows, &mut new_rows),
                     &heights,
-                    file_index,
-                    file,
+                    FileToInsert {
+                        index: file_index,
+                        file,
+                        notes: &content.notes,
+                    },
                     (&old_slot.body, &new_slot.body),
                 );
                 old_slot.loaded = true;
@@ -417,6 +485,7 @@ impl SplitView {
         new_slot.loaded = true;
 
         let mut content = self.content.borrow_mut();
+        let content = &mut *content;
         let file = &mut content.files[file_index];
         file.emphasize();
 
@@ -436,8 +505,11 @@ impl SplitView {
             (&mut old_iter, &mut new_iter),
             (&mut old_rows, &mut new_rows),
             &heights,
-            file_index,
-            file,
+            FileToInsert {
+                index: file_index,
+                file,
+                notes: &content.notes,
+            },
             (&old_slot.body, &new_slot.body),
         );
 
@@ -452,10 +524,14 @@ impl SplitView {
         iters: (&mut gtk::TextIter, &mut gtk::TextIter),
         rows: (&mut RowRecorder, &mut RowRecorder),
         heights: &(LineHeights, LineHeights),
-        file_index: usize,
-        file: &FileDiff,
+        to_insert: FileToInsert,
         file_bodies: (&str, &str),
     ) {
+        let FileToInsert {
+            index: file_index,
+            file,
+            notes,
+        } = to_insert;
         let (old_iter, new_iter) = iters;
         let (old_rows, new_rows) = rows;
         let (old_heights, new_heights) = heights;
@@ -500,6 +576,9 @@ impl SplitView {
             }
         };
 
+        let notes = line_notes::notes_by_line(notes, file);
+        let change_note = self.change_note.borrow().clone();
+
         for (hunk_index, hunk) in file.hunks.iter().enumerate() {
             insert_gap(old_iter, new_iter, old_rows, new_rows, hunk_index);
             old_rows.set(old_iter, Row::HunkHeader);
@@ -517,29 +596,73 @@ impl SplitView {
                 true,
             );
 
-            for (old, new) in hunk.side_by_side() {
-                let old_line = self.old.insert_line(
-                    old_iter,
-                    old_rows,
-                    old,
-                    &[text::FILE_BODY, old_file_body, &old_body],
-                );
-                let new_line = self.new.insert_line(
-                    new_iter,
-                    new_rows,
-                    new,
-                    &[text::FILE_BODY, new_file_body, &new_body],
+            let old_bodies = [text::FILE_BODY, old_file_body, &old_body];
+            let new_bodies = [text::FILE_BODY, new_file_body, &new_body];
+            for (old_index, new_index) in hunk.side_by_side_indices() {
+                let old = old_index.map(|i| &hunk.lines[i]);
+                let new = new_index.map(|i| &hunk.lines[i]);
+                let old_line =
+                    self.old
+                        .insert_line(old_iter, old_rows, file_index, old, &old_bodies);
+                let new_line =
+                    self.new
+                        .insert_line(new_iter, new_rows, file_index, new, &new_bodies);
+                self.equalize(
+                    (old_line, new_line),
+                    (old_heights.of(old), new_heights.of(new)),
                 );
 
-                let old_height = old_heights.of(old);
-                let new_height = new_heights.of(new);
-                if old_height < new_height {
-                    self.old.pad_line(old_line, new_height - old_height);
-                } else if new_height < old_height {
-                    self.new.pad_line(new_line, old_height - new_height);
+                // A note on a removed line goes on the old side, and any other
+                // on the new side, with fillers beside them
+                let notes_at = |index: Option<usize>| -> &[&LineNote] {
+                    index
+                        .and_then(|i| notes.get(&(hunk_index, i)))
+                        .map_or(&[], |notes| notes.as_slice())
+                };
+                let old_notes = match old {
+                    Some(line) if line.kind == LineKind::Removed => notes_at(old_index),
+                    _ => &[],
+                };
+                let new_notes = notes_at(new_index);
+                let Some(change) = &change_note else {
+                    continue;
+                };
+                for k in 0..old_notes.len().max(new_notes.len()) {
+                    let (old_note, new_note) =
+                        (old_notes.get(k).copied(), new_notes.get(k).copied());
+                    let old_line = self.old.insert_note(
+                        old_iter,
+                        old_rows,
+                        file_index,
+                        old_note,
+                        &old_bodies,
+                        change,
+                    );
+                    let new_line = self.new.insert_note(
+                        new_iter,
+                        new_rows,
+                        file_index,
+                        new_note,
+                        &new_bodies,
+                        change,
+                    );
+                    self.equalize(
+                        (old_line, new_line),
+                        (old_heights.of_note(old_note), new_heights.of_note(new_note)),
+                    );
                 }
             }
         }
         insert_gap(old_iter, new_iter, old_rows, new_rows, file.hunks.len());
+    }
+
+    /// Pads the shorter of the two lines of a row, given as lines of the
+    /// buffers and their heights, to the height of the other.
+    fn equalize(&self, (old_line, new_line): (i32, i32), (old_height, new_height): (i32, i32)) {
+        if old_height < new_height {
+            self.old.pad_line(old_line, new_height - old_height);
+        } else if new_height < old_height {
+            self.new.pad_line(new_line, old_height - new_height);
+        }
     }
 }

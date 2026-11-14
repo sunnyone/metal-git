@@ -16,6 +16,7 @@ use git2::build::CheckoutBuilder;
 use git2::Error;
 
 use crate::diff::{self, FileDiff};
+use crate::line_notes;
 use crate::diff_view::DiffViewer;
 use crate::repository_ext::RepositoryExt;
 use crate::repository_manager::RepositoryManager;
@@ -134,7 +135,10 @@ impl CommitWindow {
         right.set_shrink_start_child(true);
         root.set_end_child(Some(&right));
 
-        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
+        let diff_viewer = DiffViewer::new(
+            diff::old_content_reader(&repository_manager),
+            line_notes::notes_path_of(&repository_manager),
+        );
         right.set_start_child(Some(&diff_viewer.widget()));
 
         let bottom = gtk::Box::builder()

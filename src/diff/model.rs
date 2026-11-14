@@ -54,6 +54,14 @@ impl DiffHunk {
     /// sides. In a run of changes, paired lines share a row, and the lines
     /// between pairs fill the rows in order.
     pub fn side_by_side(&self) -> Vec<SideBySideRow<'_>> {
+        self.side_by_side_indices()
+            .into_iter()
+            .map(|(old, new)| (old.map(|i| &self.lines[i]), new.map(|i| &self.lines[i])))
+            .collect()
+    }
+
+    /// The rows of `side_by_side`, as indices into `lines`.
+    pub fn side_by_side_indices(&self) -> Vec<(Option<usize>, Option<usize>)> {
         let lines = &self.lines;
         let mut rows = Vec::with_capacity(lines.len());
         let mut pairs = self.pairs.iter().peekable();
@@ -61,7 +69,7 @@ impl DiffHunk {
         let mut i = 0;
         while i < lines.len() {
             if lines[i].kind == LineKind::Context {
-                rows.push((Some(&lines[i]), Some(&lines[i])));
+                rows.push((Some(i), Some(i)));
                 i += 1;
                 continue;
             }
@@ -83,27 +91,20 @@ impl DiffHunk {
                 pairs.next();
                 let pair_r = removed.iter().position(|&l| l == pair_r).unwrap();
                 let pair_a = added.iter().position(|&l| l == pair_a).unwrap();
-                push_zipped(&mut rows, lines, &removed[r..pair_r], &added[a..pair_a]);
-                rows.push((Some(&lines[removed[pair_r]]), Some(&lines[added[pair_a]])));
+                push_zipped(&mut rows, &removed[r..pair_r], &added[a..pair_a]);
+                rows.push((Some(removed[pair_r]), Some(added[pair_a])));
                 r = pair_r + 1;
                 a = pair_a + 1;
             }
-            push_zipped(&mut rows, lines, &removed[r..], &added[a..]);
+            push_zipped(&mut rows, &removed[r..], &added[a..]);
         }
         rows
     }
 }
 
-fn push_zipped<'a>(
-    rows: &mut Vec<SideBySideRow<'a>>,
-    lines: &'a [DiffLine],
-    removed: &[usize],
-    added: &[usize],
-) {
+fn push_zipped(rows: &mut Vec<(Option<usize>, Option<usize>)>, removed: &[usize], added: &[usize]) {
     for k in 0..removed.len().max(added.len()) {
-        let old = removed.get(k).map(|&l| &lines[l]);
-        let new = added.get(k).map(|&l| &lines[l]);
-        rows.push((old, new));
+        rows.push((removed.get(k).copied(), added.get(k).copied()));
     }
 }
 

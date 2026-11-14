@@ -97,6 +97,7 @@ mod imp {
                 kind,
                 old_lineno,
                 new_lineno,
+                ..
             } = *row
             else {
                 return;

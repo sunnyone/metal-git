@@ -2,8 +2,9 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::diff_text_view::DiffTextView;
+use super::diff_text_view::{DiffTextView, Row};
 use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, LineKind, Reveal};
+use crate::line_notes::{LineNote, Side};
 
 const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";
@@ -20,11 +21,16 @@ pub const FILE_BODY: &str = "file-body";
 /// The line that stands for unchanged lines left out of a diff
 const GAP: &str = "gap";
 const LINK: &str = "link";
+const LINE_NOTE: &str = "line-note";
+/// A note that was gone through
+const LINE_NOTE_DONE: &str = "line-note-done";
 
 // Translucent so that they read well on light and dark themes
 pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
 pub const HUNK_HEADER_BACKGROUND: &str = "rgba(90,140,255,0.12)";
 pub const GAP_BACKGROUND: &str = "rgba(90,140,255,0.06)";
+pub const LINE_NOTE_BACKGROUND: &str = "rgba(240,190,0,0.20)";
+pub const LINE_NOTE_DONE_BACKGROUND: &str = "rgba(240,190,0,0.08)";
 pub const ADDED_BACKGROUND: &str = "rgba(46,160,67,0.16)";
 pub const REMOVED_BACKGROUND: &str = "rgba(248,81,73,0.16)";
 pub const FILLER_BACKGROUND: &str = "rgba(127,127,127,0.10)";
@@ -62,6 +68,16 @@ fn create_tag_table() -> gtk::TextTagTable {
             .name(NOTE)
             .foreground("rgba(127,127,127,1)")
             .style(gtk::pango::Style::Italic)
+            .build(),
+        gtk::TextTag::builder()
+            .name(LINE_NOTE)
+            .style(gtk::pango::Style::Italic)
+            .build(),
+        gtk::TextTag::builder()
+            .name(LINE_NOTE_DONE)
+            .style(gtk::pango::Style::Italic)
+            .strikethrough(true)
+            .foreground("rgba(127,127,127,1)")
             .build(),
         gtk::TextTag::builder()
             .name(GAP)
@@ -792,4 +808,98 @@ impl Links {
             .find(|l| iter.has_tag(&l.tag))
             .map(get)
     }
+}
+
+/// What a link of a note changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteChange {
+    SetDone(bool),
+    Delete,
+}
+
+/// Called with the index of a file, the id of a note on it, and what to change.
+pub type ChangeNote = Rc<dyn Fn(usize, u64, NoteChange)>;
+
+/// Called with the index of a file, the side and number of a line of it to
+/// leave a note on, and the point of the view that was clicked.
+pub type RequestNote = Rc<dyn Fn(usize, Side, u32, &gtk::Widget, f64, f64)>;
+
+/// The file, side and line number a note left on a row would take: a removed
+/// line is in the old version, and any other in the new one.
+pub fn note_target(row: Row) -> Option<(usize, Side, u32)> {
+    let Row::Line {
+        file,
+        kind,
+        old_lineno,
+        new_lineno,
+    } = row
+    else {
+        return None;
+    };
+    match kind {
+        LineKind::Removed => old_lineno.map(|n| (file, Side::Old, n)),
+        _ => new_lineno.map(|n| (file, Side::New, n)),
+    }
+}
+
+/// Lets a right click on a line of a view ask for a note on it, in place of
+/// the menu of the text view, which the view does not need as it cannot be
+/// edited.
+pub fn connect_request_note(
+    view: &DiffTextView,
+    request: impl Fn() -> Option<RequestNote> + 'static,
+) {
+    let click = gtk::GestureClick::builder()
+        .button(gtk::gdk::BUTTON_SECONDARY)
+        .propagation_phase(gtk::PropagationPhase::Capture)
+        .build();
+    let w = view.downgrade();
+    click.connect_pressed(move |gesture, _, x, y| {
+        let (Some(view), Some(request)) = (w.upgrade(), request()) else {
+            return;
+        };
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        if let Some((file, side, line)) = view.row_at(x, y).and_then(note_target) {
+            request(file, side, line, view.upcast_ref(), x, y);
+        }
+    });
+    view.add_controller(click);
+}
+
+/// Inserts the line of a note: its text, and links that mark it as done, or
+/// as not done once it is, and delete it.
+pub fn insert_line_note(
+    links: &Links,
+    iter: &mut gtk::TextIter,
+    file_index: usize,
+    note: &LineNote,
+    tags: &[&str],
+    change: &ChangeNote,
+) {
+    let buffer = iter.buffer();
+    let mut note_tags = tags.to_vec();
+    note_tags.push(if note.done { LINE_NOTE_DONE } else { LINE_NOTE });
+    // A note is one line, whatever line breaks its text has
+    let text = note.text.replace(['\n', '\r'], " ");
+    insert(&buffer, iter, &format!("✎ {}", text), &note_tags);
+
+    let mut add_link = |label: &str, tooltip: &str, how: NoteChange| {
+        insert(&buffer, iter, "   ", tags);
+        let change = change.clone();
+        let id = note.id;
+        links.insert(iter, label, tags, tooltip, move || {
+            change(file_index, id, how)
+        });
+    };
+    if note.done {
+        add_link(
+            "Reopen",
+            "Mark the note as not done",
+            NoteChange::SetDone(false),
+        );
+    } else {
+        add_link("Done", "Mark the note as done", NoteChange::SetDone(true));
+    }
+    add_link("Delete", "Delete the note", NoteChange::Delete);
+    insert(&buffer, iter, "\n", tags);
 }

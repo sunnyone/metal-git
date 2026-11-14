@@ -12,8 +12,9 @@ use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
 use crate::diff::{self, DiffSettings, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
+use crate::line_notes::{self, LineNote, NotesPath, Side};
 use split::SplitView;
-use text::{RevealFileGap, ToggleViewed};
+use text::{ChangeNote, NoteChange, RequestNote, RevealFileGap, ToggleViewed};
 use unified::UnifiedView;
 
 const LAYOUTS: [DiffLayout; 2] = [DiffLayout::Unified, DiffLayout::Split];
@@ -55,6 +56,8 @@ struct Content {
     files: Vec<FileDiff>,
     open: Vec<bool>,
     viewed: Vec<bool>,
+    /// The notes of the repository, which the files show on their lines
+    notes: Vec<LineNote>,
 }
 
 type SharedContent = Rc<RefCell<Content>>;
@@ -75,6 +78,8 @@ pub struct DiffViewer {
     /// Reads the old versions of files, which hold the unchanged lines that
     /// the diff leaves out
     read_old_content: OldContentReader,
+    /// Where the notes on lines are kept
+    notes_path: NotesPath,
     viewed_changed: RefCell<Option<ViewedChanged>>,
     /// Asked again when the settings change
     source: RefCell<Option<DiffSource>>,
@@ -84,7 +89,7 @@ pub struct DiffViewer {
 pub type ViewedChanged = Box<dyn Fn(&[bool])>;
 
 impl DiffViewer {
-    pub fn new(read_old_content: OldContentReader) -> Rc<DiffViewer> {
+    pub fn new(read_old_content: OldContentReader, notes_path: NotesPath) -> Rc<DiffViewer> {
         let summary = gtk::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -145,6 +150,7 @@ impl DiffViewer {
             split,
             content,
             read_old_content,
+            notes_path,
             viewed_changed: RefCell::new(None),
             source: RefCell::new(None),
         });
@@ -176,6 +182,23 @@ impl DiffViewer {
         });
         viewer.unified.connect_toggle_viewed(toggle_viewed.clone());
         viewer.split.connect_toggle_viewed(toggle_viewed);
+
+        let w = Rc::downgrade(&viewer);
+        let request_note: RequestNote = Rc::new(move |file_index, side, line, widget, x, y| {
+            if let Some(viewer) = w.upgrade() {
+                viewer.ask_note(file_index, side, line, widget, x, y);
+            }
+        });
+        let w = Rc::downgrade(&viewer);
+        let change_note: ChangeNote = Rc::new(move |file_index, id, change| {
+            if let Some(viewer) = w.upgrade() {
+                viewer.change_note(file_index, id, change);
+            }
+        });
+        viewer
+            .unified
+            .connect_notes(request_note.clone(), change_note.clone());
+        viewer.split.connect_notes(request_note, change_note);
 
         let w = Rc::downgrade(&viewer);
         viewer.layout_dropdown.connect_selected_notify(move |_| {
@@ -257,6 +280,7 @@ impl DiffViewer {
             files,
             open,
             viewed,
+            notes: self.load_notes(),
         });
         self.update_summary();
         self.render();
@@ -332,6 +356,110 @@ impl DiffViewer {
             DiffLayout::Split => self.split.reload_file(file_index),
         }
         Ok(())
+    }
+
+    fn load_notes(&self) -> Vec<LineNote> {
+        (self.notes_path)()
+            .map(|path| line_notes::load_notes(&path))
+            .unwrap_or_default()
+    }
+
+    /// Asks for the text of a note on a line, in a popover at the point that
+    /// was clicked, and leaves it.
+    fn ask_note(
+        self: &Rc<Self>,
+        file_index: usize,
+        side: Side,
+        line: u32,
+        widget: &gtk::Widget,
+        x: f64,
+        y: f64,
+    ) {
+        let entry = gtk::Entry::builder()
+            .placeholder_text("A note to go through before pushing")
+            .width_chars(40)
+            .build();
+        let popover = gtk::Popover::builder().child(&entry).build();
+        popover.set_parent(widget);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+
+        let w = Rc::downgrade(self);
+        let p = popover.downgrade();
+        entry.connect_activate(move |entry| {
+            let text = entry.text();
+            if let (Some(viewer), false) = (w.upgrade(), text.trim().is_empty()) {
+                dialog_when_error!(
+                    "Failed to leave the note: {}",
+                    viewer.add_note(file_index, side, line, text.trim())
+                );
+            }
+            if let Some(popover) = p.upgrade() {
+                popover.popdown();
+            }
+        });
+        // Unparented once closed, after the popover is done with its signal
+        popover.connect_closed(|popover| {
+            let popover = popover.clone();
+            gtk::glib::idle_add_local_once(move || popover.unparent());
+        });
+        popover.popup();
+        entry.grab_focus();
+    }
+
+    fn add_note(
+        &self,
+        file_index: usize,
+        side: Side,
+        line: u32,
+        text: &str,
+    ) -> std::io::Result<()> {
+        let Some(notes_path) = (self.notes_path)() else {
+            return Ok(());
+        };
+        let target = {
+            let content = self.content.borrow();
+            content.files.get(file_index).and_then(|file| {
+                let path = match side {
+                    Side::Old => file.old_path.clone(),
+                    Side::New => file.new_path.clone(),
+                }?;
+                let anchor = file
+                    .hunks
+                    .iter()
+                    .flat_map(|hunk| &hunk.lines)
+                    .find(|l| line_notes::side_of(l) == Some((side, line)))?
+                    .content
+                    .clone();
+                Some((path, anchor))
+            })
+        };
+        let Some((path, anchor)) = target else {
+            return Ok(());
+        };
+        line_notes::add_note(&notes_path, &path, side, line, &anchor, text)?;
+        self.notes_changed(file_index);
+        Ok(())
+    }
+
+    fn change_note(&self, file_index: usize, id: u64, change: NoteChange) {
+        let Some(notes_path) = (self.notes_path)() else {
+            return;
+        };
+        let result = match change {
+            NoteChange::SetDone(done) => line_notes::set_note_done(&notes_path, id, done),
+            NoteChange::Delete => line_notes::delete_note(&notes_path, id),
+        };
+        dialog_when_error!("Failed to change the note: {}", result);
+        self.notes_changed(file_index);
+    }
+
+    /// Reads the notes again and draws the file whose notes changed.
+    fn notes_changed(&self, file_index: usize) {
+        self.content.borrow_mut().notes = self.load_notes();
+        match self.layout() {
+            DiffLayout::Unified => self.unified.reload_file(file_index),
+            DiffLayout::Split => self.split.reload_file(file_index),
+        }
     }
 
     fn layout(&self) -> DiffLayout {

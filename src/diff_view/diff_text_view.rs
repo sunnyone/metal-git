@@ -18,7 +18,13 @@ pub enum Row {
     HunkHeader,
     /// Stands for unchanged lines left out of the diff
     Gap,
+    /// A note left on the line above
+    Note {
+        done: bool,
+    },
     Line {
+        /// The index of the file among the files shown
+        file: usize,
         kind: LineKind,
         old_lineno: Option<u32>,
         new_lineno: Option<u32>,
@@ -26,8 +32,9 @@ pub enum Row {
 }
 
 impl Row {
-    pub fn line(line: &DiffLine) -> Row {
+    pub fn line(file: usize, line: &DiffLine) -> Row {
         Row::Line {
+            file,
             kind: line.kind,
             old_lineno: line.old_lineno,
             new_lineno: line.new_lineno,
@@ -41,6 +48,8 @@ impl Row {
             Row::FileHeader => text::FILE_HEADER_BACKGROUND,
             Row::HunkHeader => text::HUNK_HEADER_BACKGROUND,
             Row::Gap => text::GAP_BACKGROUND,
+            Row::Note { done: false } => text::LINE_NOTE_BACKGROUND,
+            Row::Note { done: true } => text::LINE_NOTE_DONE_BACKGROUND,
             Row::Line { kind, .. } => match kind {
                 LineKind::Added => text::ADDED_BACKGROUND,
                 LineKind::Removed => text::REMOVED_BACKGROUND,
@@ -175,6 +184,13 @@ impl DiffTextView {
         current.drain(start..end);
         drop(current);
         self.queue_draw();
+    }
+
+    /// The row of the line at a point of the view, in widget coordinates.
+    pub fn row_at(&self, x: f64, y: f64) -> Option<Row> {
+        let (_, by) = self.window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
+        let (iter, _) = self.line_at_y(by);
+        self.imp().rows.borrow().get(iter.line() as usize).copied()
     }
 
     pub fn max_lineno(&self) -> u32 {

@@ -4,9 +4,12 @@ use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds, Links, RevealFileGap, ToggleViewed};
+use super::text::{
+    self, ChangeNote, FileSlot, Folds, Links, RequestNote, RevealFileGap, ToggleViewed,
+};
 use super::SharedContent;
 use crate::diff::FileDiff;
+use crate::line_notes::{self, LineNote};
 
 /// One column with old and new line numbers, word emphasis, and files and hunks
 /// that fold when their head line is clicked.
@@ -21,6 +24,8 @@ pub struct UnifiedView {
     slots: RefCell<Vec<FileSlot>>,
     reveal: RefCell<Option<RevealFileGap>>,
     toggle_viewed: RefCell<Option<ToggleViewed>>,
+    request_note: RefCell<Option<RequestNote>>,
+    change_note: RefCell<Option<ChangeNote>>,
 }
 
 impl UnifiedView {
@@ -40,6 +45,14 @@ impl UnifiedView {
             slots: RefCell::new(Vec::new()),
             reveal: RefCell::new(None),
             toggle_viewed: RefCell::new(None),
+            request_note: RefCell::new(None),
+            change_note: RefCell::new(None),
+        });
+
+        let w = Rc::downgrade(&unified);
+        text::connect_request_note(&unified.view, move || {
+            w.upgrade()
+                .and_then(|unified| unified.request_note.borrow().clone())
         });
 
         let w = Rc::downgrade(&unified);
@@ -65,6 +78,14 @@ impl UnifiedView {
     /// shows the change with `set_file_viewed`.
     pub fn connect_toggle_viewed(&self, toggle_viewed: ToggleViewed) {
         self.toggle_viewed.replace(Some(toggle_viewed));
+    }
+
+    /// Sets what runs when a line is right-clicked to leave a note on it, and
+    /// when a link of a note is clicked. The caller changes the notes and
+    /// draws the file again with `reload_file`.
+    pub fn connect_notes(&self, request: RequestNote, change: ChangeNote) {
+        self.request_note.replace(Some(request));
+        self.change_note.replace(Some(change));
     }
 
     /// Shows whether a file is viewed, and closes it when it is, or opens it.
@@ -105,7 +126,14 @@ impl UnifiedView {
             );
             if open {
                 file.emphasize();
-                self.insert_body(&mut iter, &mut rows, file_index, file, &slot.body);
+                self.insert_body(
+                    &mut iter,
+                    &mut rows,
+                    file_index,
+                    file,
+                    &content.notes,
+                    &slot.body,
+                );
                 slot.loaded = true;
             }
             slots.push(slot);
@@ -176,6 +204,7 @@ impl UnifiedView {
         slot.loaded = true;
 
         let mut content = self.content.borrow_mut();
+        let content = &mut *content;
         let file = &mut content.files[file_index];
         file.emphasize();
 
@@ -184,7 +213,14 @@ impl UnifiedView {
         let start_line = iter.line() as usize;
         let start_offset = iter.offset();
         let mut rows = RowRecorder::default();
-        self.insert_body(&mut iter, &mut rows, file_index, file, &slot.body);
+        self.insert_body(
+            &mut iter,
+            &mut rows,
+            file_index,
+            file,
+            &content.notes,
+            &slot.body,
+        );
         let end_line = iter.line() as usize;
 
         text::finish_file_body(&buffer, &buffer.iter_at_offset(start_offset), &iter);
@@ -194,13 +230,14 @@ impl UnifiedView {
     }
 
     /// Inserts the hunks of a file, all carrying the `file_body` tag, with the
-    /// gaps between them.
+    /// gaps between them and the notes on their lines.
     fn insert_body(
         &self,
         iter: &mut gtk::TextIter,
         rows: &mut RowRecorder,
         file_index: usize,
         file: &FileDiff,
+        notes: &[LineNote],
         file_body: &str,
     ) {
         let buffer = self.view.buffer();
@@ -235,6 +272,9 @@ impl UnifiedView {
             }
         };
 
+        let notes = line_notes::notes_by_line(notes, file);
+        let change_note = self.change_note.borrow().clone();
+
         for (hunk_index, hunk) in file.hunks.iter().enumerate() {
             insert_gap(iter, rows, hunk_index);
             rows.set(iter, Row::HunkHeader);
@@ -245,13 +285,28 @@ impl UnifiedView {
                 true,
             );
 
-            for line in &hunk.lines {
+            for (line_index, line) in hunk.lines.iter().enumerate() {
                 let (line_tag, _) = text::line_tags(line.kind);
                 let mut tags = vec![text::FILE_BODY, file_body, body.as_str()];
                 tags.extend(line_tag);
 
-                rows.set(iter, Row::line(line));
+                rows.set(iter, Row::line(file_index, line));
                 text::insert_content(&buffer, iter, line, &tags);
+
+                let line_notes = notes.get(&(hunk_index, line_index));
+                if let (Some(line_notes), Some(change)) = (line_notes, &change_note) {
+                    for note in line_notes {
+                        rows.set(iter, Row::Note { done: note.done });
+                        text::insert_line_note(
+                            &self.links,
+                            iter,
+                            file_index,
+                            note,
+                            &[text::FILE_BODY, file_body, &body],
+                            change,
+                        );
+                    }
+                }
             }
         }
         insert_gap(iter, rows, file.hunks.len());

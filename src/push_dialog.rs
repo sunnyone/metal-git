@@ -1,3 +1,4 @@
+use crate::line_notes::{self, LineNote, Side};
 use crate::push_operation::{self, commit_count_text, ConfirmMode};
 use crate::remote_operation::{self, PushOptions, PushPreview, PushRequest, PushTarget};
 use crate::repository_manager::RepositoryManager;
@@ -161,6 +162,15 @@ impl PushDialog {
             .visible(false)
             .build();
         root.append(&commits_more_label);
+
+        // The notes left on lines, as a checklist to go through
+        if let Ok(repo) = repository_manager.open() {
+            let notes_path = line_notes::notes_path(repo.path());
+            let notes = line_notes::load_notes(&notes_path);
+            if !notes.is_empty() {
+                append_notes(&root, notes_path, notes);
+            }
+        }
 
         let buttons = gtk::Box::builder()
             .spacing(8)
@@ -595,6 +605,66 @@ fn format_thousands(value: usize) -> String {
         out.push(digit);
     }
     out
+}
+
+/// Appends the notes as a checklist, whose checks mark them as done. Notes do
+/// not stop a push; the title counts those not done yet.
+fn append_notes(root: &gtk::Box, notes_path: std::path::PathBuf, notes: Vec<LineNote>) {
+    let title = section_label("");
+    root.append(&title);
+    let list = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .build();
+    let scrolled = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .max_content_height(160)
+        .margin_start(12)
+        .child(&list)
+        .build();
+    root.append(&scrolled);
+
+    let open_count = Rc::new(Cell::new(notes.iter().filter(|note| !note.done).count()));
+    let update_title = {
+        let title = title.clone();
+        let open_count = open_count.clone();
+        move || title.set_label(&notes_title(open_count.get()))
+    };
+    update_title();
+
+    let notes_path = Rc::new(notes_path);
+    let update_title = Rc::new(update_title);
+    for note in notes {
+        let side = match note.side {
+            Side::Old => " (removed)",
+            Side::New => "",
+        };
+        let check = gtk::CheckButton::builder()
+            .label(format!("{}:{}{}  {}", note.path, note.line, side, note.text))
+            .active(note.done)
+            .build();
+        let (notes_path, open_count, update_title) =
+            (notes_path.clone(), open_count.clone(), update_title.clone());
+        check.connect_toggled(move |check| {
+            let done = check.is_active();
+            if let Err(err) = line_notes::set_note_done(&notes_path, note.id, done) {
+                eprintln!("Failed to save the note: {}", err);
+            }
+            let count = open_count.get();
+            open_count.set(if done { count - 1 } else { count + 1 });
+            update_title();
+        });
+        list.append(&check);
+    }
+}
+
+fn notes_title(open_count: usize) -> String {
+    match open_count {
+        0 => "Notes: all done".to_string(),
+        1 => "Notes: 1 not done".to_string(),
+        n => format!("Notes: {} not done", n),
+    }
 }
 
 fn section_label(text: &str) -> gtk::Label {
