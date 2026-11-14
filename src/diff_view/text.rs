@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::diff_text_view::DiffTextView;
-use crate::diff_model::{DiffLine, FileDiff, FileStatus, LineKind};
+use crate::diff::{DiffLine, FileDiff, FileStatus, LineKind};
 
 const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";

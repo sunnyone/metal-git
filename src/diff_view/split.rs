@@ -7,7 +7,7 @@ use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
 use super::text::{self, FileSlot, Folds};
 use super::SharedContent;
-use crate::diff_model::{DiffLine, FileDiff};
+use crate::diff::{DiffLine, FileDiff};
 
 /// One side of a split view.
 struct Side {
