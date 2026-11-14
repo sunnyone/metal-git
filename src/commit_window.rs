@@ -15,9 +15,8 @@ use std::str;
 use git2::build::CheckoutBuilder;
 use git2::Error;
 
-use crate::diff_text_view_util;
-use crate::diff_text_view_util::create_diff_text_buffer;
-use crate::gtk_utils;
+use crate::diff_model::{self, FileDiff};
+use crate::diff_view::DiffViewer;
 use crate::repository_ext::RepositoryExt;
 use crate::repository_manager::RepositoryManager;
 use crate::work_tree_status;
@@ -32,7 +31,7 @@ pub struct CommitWindow {
     commit_button: gtk::Button,
     work_tree_files_list_box: gtk::ListBox,
     staged_files_list_box: gtk::ListBox,
-    diff_text_view: gtk::TextView,
+    diff_viewer: DiffViewer,
     message_text_view: gtk::TextView,
     repository_manager: Rc<RepositoryManager>,
     commited: RefCell<Box<dyn Fn()>>,
@@ -135,20 +134,8 @@ impl CommitWindow {
         right.set_shrink_start_child(true);
         root.set_end_child(Some(&right));
 
-        let diff_text_buffer = create_diff_text_buffer();
-        let diff_text_view = gtk::TextView::builder()
-            .editable(false)
-            .buffer(&diff_text_buffer)
-            .monospace(true)
-            .build();
-        let diff_scrolled = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .hexpand(true)
-            .vexpand(true)
-            .child(&diff_text_view)
-            .build();
-        right.set_start_child(Some(&diff_scrolled));
+        let diff_viewer = DiffViewer::new();
+        right.set_start_child(Some(&diff_viewer.widget()));
 
         let bottom = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -197,7 +184,7 @@ impl CommitWindow {
             commit_button,
             work_tree_files_list_box,
             staged_files_list_box,
-            diff_text_view,
+            diff_viewer,
             message_text_view,
             repository_manager,
             commited: RefCell::new(Box::new(|| {})),
@@ -635,13 +622,13 @@ impl CommitWindow {
         let status = repo.status_file(path)?;
         if status == git2::Status::WT_NEW {
             self.show_new_file(path);
-        } else {
-            let mut diff_opts = git2::DiffOptions::new();
-            diff_opts.pathspec(filename);
-            let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
-            self.show_diff(&diff);
+            return Ok(());
         }
 
+        let mut diff_opts = git2::DiffOptions::new();
+        diff_opts.pathspec(filename);
+        let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
+        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 
@@ -656,32 +643,17 @@ impl CommitWindow {
         let head_tree = head_tree_object.as_tree().unwrap();
 
         let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
-        self.show_diff(&diff);
-
+        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 
-    fn show_diff(&self, diff: &git2::Diff) {
-        let buffer = self.diff_text_view.buffer();
-        diff_text_view_util::print_diff_to_text_view(diff, &buffer);
-    }
-
-    pub fn set_diff_all_add_text(&self, text: &str) {
-        let buffer = self.diff_text_view.buffer();
-        buffer.set_text("");
-
-        let mut iter = buffer.start_iter();
-        gtk_utils::text_buffer_insert_with_tag_by_name(&buffer, &mut iter, text, "add");
-    }
-
     fn show_new_file(&self, path_in_repository: &Path) {
-        match self.read_contents(path_in_repository) {
-            Ok(s) => self.set_diff_all_add_text(&s),
-            Err(err) => {
-                let msg = format!("This file is not browsable: {}", err);
-                self.set_diff_all_add_text(&msg);
-            }
-        }
+        let name = path_in_repository.to_string_lossy();
+        let text = match self.read_contents(path_in_repository) {
+            Ok(s) => s,
+            Err(err) => format!("This file is not browsable: {}", err),
+        };
+        self.diff_viewer.show_files(&[FileDiff::all_added(&name, &text)]);
     }
 
     fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {
