@@ -12,6 +12,8 @@ use crate::diff_model::{DiffLine, LineKind};
 pub enum Row {
     #[default]
     Blank,
+    /// Stands for a line that only the other side of a split view has
+    Filler,
     FileHeader,
     HunkHeader,
     Line {
@@ -33,6 +35,7 @@ impl Row {
     pub fn background(&self) -> Option<gdk::RGBA> {
         let color = match self {
             Row::Blank => return None,
+            Row::Filler => text::FILLER_BACKGROUND,
             Row::FileHeader => text::FILE_HEADER_BACKGROUND,
             Row::HunkHeader => text::HUNK_HEADER_BACKGROUND,
             Row::Line { kind, .. } => match kind {
@@ -42,6 +45,29 @@ impl Row {
             },
         };
         Some(gdk::RGBA::parse(color).unwrap())
+    }
+}
+
+/// Collects the rows of a buffer while it is filled.
+#[derive(Default)]
+pub struct RowRecorder {
+    rows: Vec<Row>,
+}
+
+impl RowRecorder {
+    /// Records the row of the line that starts at `iter`. Rows are recorded by
+    /// line, as a line can hold a character that the buffer treats as a line
+    /// break, such as a lone CR, and the lines after it must keep their rows.
+    pub fn set(&mut self, iter: &gtk::TextIter, row: Row) {
+        let line = iter.line() as usize;
+        if self.rows.len() <= line {
+            self.rows.resize(line + 1, Row::Blank);
+        }
+        self.rows[line] = row;
+    }
+
+    pub fn into_rows(self) -> Vec<Row> {
+        self.rows
     }
 }
 

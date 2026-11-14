@@ -31,7 +31,7 @@ pub struct CommitWindow {
     commit_button: gtk::Button,
     work_tree_files_list_box: gtk::ListBox,
     staged_files_list_box: gtk::ListBox,
-    diff_viewer: DiffViewer,
+    diff_viewer: Rc<DiffViewer>,
     message_text_view: gtk::TextView,
     repository_manager: Rc<RepositoryManager>,
     commited: RefCell<Box<dyn Fn()>>,

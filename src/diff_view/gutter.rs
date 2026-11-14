@@ -9,6 +9,25 @@ use crate::diff_model::LineKind;
 const PADDING: f32 = 6.0;
 const MIN_DIGITS: usize = 3;
 
+/// Which line numbers the gutter shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Columns {
+    /// The old and the new line numbers, for a unified view
+    #[default]
+    Both,
+    Old,
+    New,
+}
+
+impl Columns {
+    fn count(self) -> f32 {
+        match self {
+            Columns::Both => 2.0,
+            Columns::Old | Columns::New => 1.0,
+        }
+    }
+}
+
 mod imp {
     use super::*;
     use std::cell::{Cell, RefCell};
@@ -16,6 +35,7 @@ mod imp {
     #[derive(Default)]
     pub struct LineNumberGutter {
         pub view: glib::WeakRef<DiffTextView>,
+        pub columns: Cell<Columns>,
         pub font: RefCell<Option<pango::FontDescription>>,
         pub digits: Cell<usize>,
         pub digit_width: Cell<f32>,
@@ -60,11 +80,12 @@ mod imp {
     }
 
     impl LineNumberGutter {
-        /// Two columns of line numbers and one of the sign, each a fixed number
-        /// of digits wide.
+        /// Columns of line numbers and one of the sign, each a fixed number of
+        /// digits wide.
         fn preferred_width(&self) -> f32 {
             let digits = self.digits.get() as f32;
-            PADDING * 4.0 + self.digit_width.get() * (digits * 2.0 + 1.0)
+            let columns = self.columns.get().count();
+            PADDING * (columns + 2.0) + self.digit_width.get() * (digits * columns + 1.0)
         }
 
         fn draw_numbers(
@@ -83,23 +104,26 @@ mod imp {
                 return;
             };
 
+            let numbers = match self.columns.get() {
+                Columns::Both => vec![old_lineno, new_lineno],
+                Columns::Old => vec![old_lineno],
+                Columns::New => vec![new_lineno],
+            };
             let column = self.digit_width.get() * self.digits.get() as f32;
-            let old_right = PADDING + column;
-            let new_right = old_right + PADDING + column;
-            let sign_left = new_right + PADDING;
+            let mut right = 0.0;
+            for n in numbers {
+                right += PADDING + column;
+                if let Some(n) = n {
+                    self.draw_text(snapshot, &n.to_string(), right, true, area, color);
+                }
+            }
+
             let sign = match kind {
                 LineKind::Added => "+",
                 LineKind::Removed => "-",
                 LineKind::Context => "",
             };
-
-            if let Some(n) = old_lineno {
-                self.draw_text(snapshot, &n.to_string(), old_right, true, area, color);
-            }
-            if let Some(n) = new_lineno {
-                self.draw_text(snapshot, &n.to_string(), new_right, true, area, color);
-            }
-            self.draw_text(snapshot, sign, sign_left, false, area, color);
+            self.draw_text(snapshot, sign, right + PADDING, false, area, color);
         }
 
         /// Draws text centered vertically in the area, either ending at `x` or
@@ -141,9 +165,10 @@ glib::wrapper! {
 
 impl LineNumberGutter {
     /// Creates a gutter and places it on the left of the view.
-    pub fn attach(view: &DiffTextView) -> LineNumberGutter {
+    pub fn attach(view: &DiffTextView, columns: Columns) -> LineNumberGutter {
         let gutter: LineNumberGutter = glib::Object::new();
         gutter.imp().view.set(Some(view));
+        gutter.imp().columns.set(columns);
         gutter.imp().digits.set(MIN_DIGITS);
         view.set_gutter(gtk::TextWindowType::Left, Some(&gutter));
 
@@ -176,11 +201,7 @@ impl LineNumberGutter {
         imp.digits
             .set(view.max_lineno().to_string().len().max(MIN_DIGITS));
 
-        // The same font as the text, but always the Latin one for the digits
-        let mut font = view.pango_context().font_description().unwrap_or_default();
-        if let Some(family) = text::latin_monospace_family(view.upcast_ref()) {
-            font.set_family(&family);
-        }
+        let font = text::text_font(view.upcast_ref());
         let layout = self.create_pango_layout(Some("0"));
         layout.set_font_description(Some(&font));
         imp.digit_width.set(layout.pixel_size().0 as f32);
