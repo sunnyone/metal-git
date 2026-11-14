@@ -1,0 +1,258 @@
+use gtk::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::diff_model::{DiffLine, FileDiff, FileStatus, LineKind};
+
+pub const FILE_HEADER: &str = "file-header";
+pub const HUNK_HEADER: &str = "hunk-header";
+pub const ADDED: &str = "added";
+pub const REMOVED: &str = "removed";
+pub const ADDED_EMPHASIS: &str = "added-emphasis";
+pub const REMOVED_EMPHASIS: &str = "removed-emphasis";
+pub const LINENO: &str = "lineno";
+pub const NOTE: &str = "note";
+
+const OPEN_MARKER: &str = "▾";
+const CLOSED_MARKER: &str = "▸";
+
+/// Colors are translucent so that the same tags read well on light and dark themes.
+fn create_tag_table() -> gtk::TextTagTable {
+    let table = gtk::TextTagTable::new();
+    let tags = [
+        gtk::TextTag::builder()
+            .name(FILE_HEADER)
+            .weight(700)
+            .paragraph_background("rgba(127,127,127,0.22)")
+            .pixels_above_lines(10)
+            .pixels_below_lines(4)
+            .build(),
+        gtk::TextTag::builder()
+            .name(HUNK_HEADER)
+            .foreground("rgba(90,130,210,1)")
+            .paragraph_background("rgba(90,140,255,0.12)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(ADDED)
+            .paragraph_background("rgba(46,160,67,0.16)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(REMOVED)
+            .paragraph_background("rgba(248,81,73,0.16)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(LINENO)
+            .foreground("rgba(127,127,127,0.85)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(NOTE)
+            .foreground("rgba(127,127,127,1)")
+            .style(gtk::pango::Style::Italic)
+            .build(),
+        // Defined last so that they draw over the line backgrounds
+        gtk::TextTag::builder()
+            .name(ADDED_EMPHASIS)
+            .background("rgba(46,160,67,0.45)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(REMOVED_EMPHASIS)
+            .background("rgba(248,81,73,0.45)")
+            .build(),
+    ];
+    for tag in &tags {
+        table.add(tag);
+    }
+    table
+}
+
+pub fn create_text_view() -> gtk::TextView {
+    let buffer = gtk::TextBuffer::builder()
+        .tag_table(&create_tag_table())
+        .build();
+    gtk::TextView::builder()
+        .editable(false)
+        .cursor_visible(false)
+        .monospace(true)
+        .buffer(&buffer)
+        .top_margin(4)
+        .bottom_margin(4)
+        .build()
+}
+
+pub fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
+    gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true)
+        .vexpand(true)
+        .child(child)
+        .build()
+}
+
+pub fn insert(buffer: &gtk::TextBuffer, iter: &mut gtk::TextIter, text: &str, tags: &[&str]) {
+    buffer.insert_with_tags_by_name(iter, text, tags);
+}
+
+pub fn lineno(n: Option<u32>) -> String {
+    match n {
+        Some(n) => format!("{:>5} ", n),
+        None => "      ".to_string(),
+    }
+}
+
+pub fn line_tags(kind: LineKind) -> (Option<&'static str>, &'static str) {
+    match kind {
+        LineKind::Added => (Some(ADDED), ADDED_EMPHASIS),
+        LineKind::Removed => (Some(REMOVED), REMOVED_EMPHASIS),
+        LineKind::Context => (None, ADDED_EMPHASIS),
+    }
+}
+
+/// Inserts the content of a line and its line break, emphasizing its changed words.
+/// `tags` apply to the whole line.
+pub fn insert_content(
+    buffer: &gtk::TextBuffer,
+    iter: &mut gtk::TextIter,
+    line: &DiffLine,
+    tags: &[&str],
+) {
+    let (_, emphasis_tag) = line_tags(line.kind);
+    let mut emphasized_tags = tags.to_vec();
+    emphasized_tags.push(emphasis_tag);
+
+    let mut pos = 0;
+    for range in &line.emphasis {
+        insert(buffer, iter, &line.content[pos..range.start], tags);
+        insert(buffer, iter, &line.content[range.clone()], &emphasized_tags);
+        pos = range.end;
+    }
+    insert(buffer, iter, &line.content[pos..], tags);
+    insert(buffer, iter, "\n", tags);
+}
+
+pub fn file_header_text(file: &FileDiff) -> String {
+    let status = match file.status {
+        FileStatus::Added => "Added",
+        FileStatus::Deleted => "Deleted",
+        FileStatus::Modified => "Modified",
+        FileStatus::Renamed => "Renamed",
+        FileStatus::Copied => "Copied",
+        FileStatus::Other => "Changed",
+    };
+    format!(
+        " {}  {}    +{} −{}\n",
+        status,
+        file.display_path(),
+        file.count_lines(LineKind::Added),
+        file.count_lines(LineKind::Removed)
+    )
+}
+
+struct Fold {
+    head: gtk::TextTag,
+    body: gtk::TextTag,
+    head_tags: Vec<String>,
+}
+
+/// Sections of a text view that open and close when their head line is clicked.
+pub struct Folds {
+    view: gtk::TextView,
+    folds: RefCell<Vec<Fold>>,
+}
+
+impl Folds {
+    pub fn new(view: &gtk::TextView) -> Rc<Folds> {
+        let folds = Rc::new(Folds {
+            view: view.clone(),
+            folds: RefCell::new(Vec::new()),
+        });
+
+        let click = gtk::GestureClick::new();
+        let w = Rc::downgrade(&folds);
+        click.connect_released(move |_, _, x, y| {
+            if let Some(folds) = w.upgrade() {
+                folds.clicked(x, y);
+            }
+        });
+        view.add_controller(click);
+
+        folds
+    }
+
+    /// Forgets the folds of the previous content. Call it before clearing the buffer.
+    pub fn clear(&self) {
+        let table = self.view.buffer().tag_table();
+        for fold in self.folds.borrow_mut().drain(..) {
+            table.remove(&fold.head);
+            table.remove(&fold.body);
+        }
+    }
+
+    /// Inserts a head line and returns the name of the tag that the lines of the
+    /// section must carry.
+    pub fn insert_head(
+        &self,
+        iter: &mut gtk::TextIter,
+        label: &str,
+        tags: &[&str],
+        open: bool,
+    ) -> String {
+        let buffer = self.view.buffer();
+        let table = buffer.tag_table();
+        let mut folds = self.folds.borrow_mut();
+        let index = folds.len();
+
+        let head = gtk::TextTag::new(Some(&format!("fold-head-{}", index)));
+        let body = gtk::TextTag::builder()
+            .name(format!("fold-body-{}", index))
+            .invisible(!open)
+            .build();
+        table.add(&head);
+        table.add(&body);
+
+        let mut head_tags: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        head_tags.push(head.name().unwrap().to_string());
+        let head_tag_refs: Vec<&str> = head_tags.iter().map(|t| t.as_str()).collect();
+
+        let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
+        insert(&buffer, iter, marker, &head_tag_refs);
+        insert(&buffer, iter, &format!(" {}\n", label), &head_tag_refs);
+
+        let body_name = body.name().unwrap().to_string();
+        folds.push(Fold {
+            head,
+            body,
+            head_tags,
+        });
+        body_name
+    }
+
+    fn clicked(&self, x: f64, y: f64) {
+        let (bx, by) =
+            self.view
+                .window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
+        let Some(iter) = self.view.iter_at_location(bx, by) else {
+            return;
+        };
+
+        let folds = self.folds.borrow();
+        let Some(fold) = folds.iter().find(|f| iter.has_tag(&f.head)) else {
+            return;
+        };
+
+        let open = fold.body.is_invisible();
+        fold.body.set_invisible(!open);
+
+        let buffer = self.view.buffer();
+        let mut start = iter;
+        if !start.starts_tag(Some(&fold.head)) {
+            start.backward_to_tag_toggle(Some(&fold.head));
+        }
+        let mut end = start;
+        end.forward_char();
+        buffer.delete(&mut start, &mut end);
+        let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
+        let tag_refs: Vec<&str> = fold.head_tags.iter().map(|t| t.as_str()).collect();
+        insert(&buffer, &mut start, marker, &tag_refs);
+    }
+}

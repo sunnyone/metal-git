@@ -5,14 +5,14 @@ use std::rc::Rc;
 
 use crate::commit_diff_util;
 use crate::commit_diff_util::ListCommitDiffResult;
-use crate::diff_text_view_util;
-use crate::diff_text_view_util::create_diff_text_buffer;
+use crate::diff_model;
+use crate::diff_view::DiffViewer;
 use crate::repository_manager::RepositoryManager;
 
 pub struct CommitDiffPanel {
     paned: gtk::Paned,
     diff_list_box: gtk::ListBox,
-    commit_text_view: gtk::TextView,
+    diff_viewer: DiffViewer,
     repository_manager: Rc<RepositoryManager>,
     current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>,
 }
@@ -33,24 +33,13 @@ impl CommitDiffPanel {
             .build();
         paned.set_start_child(Some(&list_scrolled));
 
-        let diff_text_buffer = create_diff_text_buffer();
-        let commit_text_view = gtk::TextView::builder()
-            .editable(false)
-            .buffer(&diff_text_buffer)
-            .monospace(true)
-            .build();
-
-        let text_scrolled = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .child(&commit_text_view)
-            .build();
-        paned.set_end_child(Some(&text_scrolled));
+        let diff_viewer = DiffViewer::new();
+        paned.set_end_child(Some(&diff_viewer.widget()));
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {
             paned,
             diff_list_box,
-            commit_text_view,
+            diff_viewer,
             repository_manager,
             current_list_result: RefCell::new(None),
         });
@@ -105,47 +94,35 @@ impl CommitDiffPanel {
     }
 
     fn file_selected(&self, file_index: u32) -> Result<(), Error> {
-        if let Some(list_result) = self.current_list_result.borrow().as_ref() {
-            let repo = self.repository_manager.open()?;
-
-            let entry = &list_result.files[file_index as usize];
-
-            let current_commit = repo.find_commit(list_result.current_oid)?;
-            let parent_commit = repo.find_commit(list_result.parent_oid)?;
-
-            let parent_tree = parent_commit.tree()?;
-            let current_tree = current_commit.tree()?;
-
-            let new_file_path = entry.new_file_path.as_ref().unwrap();
-            let mut opts = DiffOptions::new();
-            opts.pathspec(new_file_path);
-
-            let diff =
-                repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
-
-            let buffer = self.commit_text_view.buffer();
-            diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
-        }
-
-        Ok(())
+        let path = self
+            .current_list_result
+            .borrow()
+            .as_ref()
+            .and_then(|r| r.files[file_index as usize].new_file_path.clone());
+        self.show_diff(path)
     }
 
     fn show_all_files_diff(&self) -> Result<(), Error> {
-        if let Some(list_result) = self.current_list_result.borrow().as_ref() {
-            let repo = self.repository_manager.open()?;
+        self.show_diff(None)
+    }
 
-            let current_commit = repo.find_commit(list_result.current_oid)?;
-            let parent_commit = repo.find_commit(list_result.parent_oid)?;
+    /// Shows the diff of the commit, limited to one file when a path is given.
+    fn show_diff(&self, path: Option<String>) -> Result<(), Error> {
+        let Some(list_result) = self.current_list_result.borrow().clone() else {
+            return Ok(());
+        };
 
-            let parent_tree = parent_commit.tree()?;
-            let current_tree = current_commit.tree()?;
+        let repo = self.repository_manager.open()?;
+        let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
+        let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
 
-            let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
-
-            let buffer = self.commit_text_view.buffer();
-            diff_text_view_util::print_diff_to_text_view(&diff, &buffer);
+        let mut opts = DiffOptions::new();
+        if let Some(path) = &path {
+            opts.pathspec(path);
         }
-
+        let diff =
+            repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
+        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 }

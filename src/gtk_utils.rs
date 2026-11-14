@@ -83,15 +83,3 @@ impl BadgeButton {
         }
     }
 }
-
-pub fn text_buffer_insert_with_tag_by_name(buffer: &gtk::TextBuffer,
-                                           iter: &mut gtk::TextIter,
-                                           text: &str,
-                                           tag_name: &str) {
-
-    let start_offset = iter.offset();
-    buffer.insert(iter, text);
-    let start_iter = buffer.iter_at_offset(start_offset);
-
-    buffer.apply_tag_by_name(tag_name, &start_iter, iter);
-}
