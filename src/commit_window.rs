@@ -625,26 +625,32 @@ impl CommitWindow {
             return Ok(());
         }
 
-        let mut diff_opts = git2::DiffOptions::new();
-        diff_opts.pathspec(filename);
-        let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
+        let repository_manager = self.repository_manager.clone();
+        let filename = filename.to_string();
+        self.diff_viewer.show_diff(Rc::new(move |settings| {
+            let repo = repository_manager.open()?;
+            let mut diff_opts = settings.options();
+            diff_opts.pathspec(&filename);
+            let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
+            diff::files_from_diff(&diff)
+        }))
     }
 
     pub fn index_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = self.repository_manager.open()?;
+        let repository_manager = self.repository_manager.clone();
+        let filename = filename.to_string();
+        self.diff_viewer.show_diff(Rc::new(move |settings| {
+            let repo = repository_manager.open()?;
+            let mut diff_opts = settings.options();
+            diff_opts.pathspec(&filename);
 
-        let mut diff_opts = git2::DiffOptions::new();
-        diff_opts.pathspec(filename);
+            let head_ref = repo.head()?;
+            let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
+            let head_tree = head_tree_object.as_tree().unwrap();
 
-        let head_ref = repo.head()?;
-        let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
-        let head_tree = head_tree_object.as_tree().unwrap();
-
-        let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
+            let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
+            diff::files_from_diff(&diff)
+        }))
     }
 
     fn show_new_file(&self, path_in_repository: &Path) {
@@ -653,7 +659,7 @@ impl CommitWindow {
             Ok(s) => s,
             Err(err) => format!("This file is not browsable: {}", err),
         };
-        self.diff_viewer.show_files(vec![FileDiff::all_added(&name, &text)]);
+        self.diff_viewer.show_fixed_files(vec![FileDiff::all_added(&name, &text)]);
     }
 
     fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {

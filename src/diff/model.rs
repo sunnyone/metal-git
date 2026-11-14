@@ -156,6 +156,9 @@ pub struct FileDiff {
     /// The lines of the old version, once read to reveal unchanged lines. See
     /// `FileDiff::reveal`.
     pub old_content: Option<Vec<String>>,
+    /// Whether the diff left out changes of whitespace, so that a file with no
+    /// hunks may still have changed its whitespace
+    pub whitespace_ignored: bool,
     /// Whether the changed words of the line pairs are marked yet. Marking them
     /// is left until the file is shown, as it is the costly part of a large diff.
     pub emphasized: bool,
@@ -195,6 +198,7 @@ impl FileDiff {
             old_id: None,
             new_id: None,
             old_content: None,
+            whitespace_ignored: false,
             emphasized: true,
         }
     }

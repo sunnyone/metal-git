@@ -119,12 +119,15 @@ impl CommitDiffPanel {
             return Ok(());
         };
 
-        let repo = self.repository_manager.open()?;
-        let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
-        let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
-        let diff = diff::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
+        let repository_manager = self.repository_manager.clone();
+        self.diff_viewer.show_diff(Rc::new(move |settings| {
+            let repo = repository_manager.open()?;
+            let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
+            let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
+            let diff =
+                diff::diff_trees(&repo, Some(&parent_tree), Some(&current_tree), settings)?;
+            diff::files_from_diff(&diff)
+        }))
     }
 }
 

@@ -2,8 +2,8 @@ extern crate metal_git;
 extern crate tempdir;
 
 use metal_git::app_settings::{
-    load_diff_layout, load_history_scope, load_viewed_changes, save_change_viewed,
-    save_diff_layout, save_history_scope, DiffLayout,
+    load_diff_layout, load_hide_whitespace, load_history_scope, load_viewed_changes,
+    save_change_viewed, save_diff_layout, save_hide_whitespace, save_history_scope, DiffLayout,
 };
 use metal_git::railway::HistoryScope;
 use std::fs;
@@ -80,4 +80,16 @@ pub fn saving_a_viewed_change_keeps_the_marks_saved_elsewhere() {
     save_change_viewed(&path, "k1", true).unwrap();
 
     assert_eq!(2, load_viewed_changes(&path).len());
+}
+
+#[test]
+pub fn whitespace_is_shown_unless_saved_as_hidden() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("diff-whitespace");
+
+    assert!(!load_hide_whitespace(&path));
+    save_hide_whitespace(&path, true).unwrap();
+    assert!(load_hide_whitespace(&path));
+    save_hide_whitespace(&path, false).unwrap();
+    assert!(!load_hide_whitespace(&path));
 }

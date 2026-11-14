@@ -1,8 +1,23 @@
 //! Reading the files of a git2 diff into `FileDiff`s.
 
-use git2::{Delta, Diff, Error, Patch};
+use git2::{Delta, Diff, DiffOptions, Error, Patch};
 
 use super::model::{DiffHunk, DiffLine, FileDiff, FileStatus, LineKind};
+
+/// How a diff is taken, as the reader chose.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiffSettings {
+    /// Leaves out changes of whitespace, as `git diff -w` does
+    pub ignore_whitespace: bool,
+}
+
+impl DiffSettings {
+    pub fn options(&self) -> DiffOptions {
+        let mut options = DiffOptions::new();
+        options.ignore_whitespace(self.ignore_whitespace);
+        options
+    }
+}
 
 /// The files of a diff, with their changed words not marked yet. See
 /// `FileDiff::emphasize`.
@@ -21,6 +36,7 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
                     old_id: Some(delta.old_file().id()).filter(|id| !id.is_zero()),
                     new_id: Some(delta.new_file().id()).filter(|id| !id.is_zero()),
                     old_content: None,
+                    whitespace_ignored: false,
                     emphasized: true,
                 }),
             }
@@ -82,6 +98,7 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
         old_id: Some(delta.old_file().id()).filter(|id| !id.is_zero()),
         new_id: Some(delta.new_file().id()).filter(|id| !id.is_zero()),
         old_content: None,
+        whitespace_ignored: false,
         emphasized: false,
     })
 }

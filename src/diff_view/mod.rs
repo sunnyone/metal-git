@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff::{self, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
+use crate::diff::{self, DiffSettings, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
 use split::SplitView;
 use text::{RevealFileGap, ToggleViewed};
 use unified::UnifiedView;
@@ -59,9 +59,13 @@ struct Content {
 
 type SharedContent = Rc<RefCell<Content>>;
 
+/// Takes the diff to show, as the settings say.
+pub type DiffSource = Rc<dyn Fn(DiffSettings) -> Result<Vec<FileDiff>, git2::Error>>;
+
 pub struct DiffViewer {
     root: gtk::Box,
     summary: gtk::Label,
+    whitespace_check: gtk::CheckButton,
     layout_dropdown: gtk::DropDown,
     stack: gtk::Stack,
     unified: Rc<UnifiedView>,
@@ -72,6 +76,8 @@ pub struct DiffViewer {
     /// the diff leaves out
     read_old_content: OldContentReader,
     viewed_changed: RefCell<Option<ViewedChanged>>,
+    /// Asked again when the settings change
+    source: RefCell<Option<DiffSource>>,
 }
 
 /// Called with which of the files shown are viewed, whenever that changes.
@@ -83,6 +89,14 @@ impl DiffViewer {
             .xalign(0.0)
             .hexpand(true)
             .css_classes(["dim-label"])
+            .build();
+
+        let whitespace_check = gtk::CheckButton::builder()
+            .label("Hide whitespace")
+            .tooltip_text("Leave out changes of whitespace")
+            .active(app_settings::load_hide_whitespace(
+                &app_settings::whitespace_path(),
+            ))
             .build();
 
         let labels: Vec<&str> = LAYOUTS.iter().map(|l| layout_label(*l)).collect();
@@ -98,6 +112,7 @@ impl DiffViewer {
             .margin_bottom(4)
             .build();
         toolbar.append(&summary);
+        toolbar.append(&whitespace_check);
         toolbar.append(&layout_dropdown);
 
         let content = SharedContent::default();
@@ -123,6 +138,7 @@ impl DiffViewer {
         let viewer = Rc::new(DiffViewer {
             root,
             summary,
+            whitespace_check,
             layout_dropdown,
             stack,
             unified,
@@ -130,6 +146,14 @@ impl DiffViewer {
             content,
             read_old_content,
             viewed_changed: RefCell::new(None),
+            source: RefCell::new(None),
+        });
+
+        let w = Rc::downgrade(&viewer);
+        viewer.whitespace_check.connect_toggled(move |_| {
+            if let Some(viewer) = w.upgrade() {
+                viewer.whitespace_toggled();
+            }
         });
 
         let w = Rc::downgrade(&viewer);
@@ -173,9 +197,52 @@ impl DiffViewer {
         self.viewed_changed.replace(Some(Box::new(viewed_changed)));
     }
 
+    /// Shows the diff a source takes, and takes it again when the settings
+    /// change.
+    pub fn show_diff(&self, source: DiffSource) -> Result<(), git2::Error> {
+        self.source.replace(Some(source));
+        self.refresh()
+    }
+
+    /// Shows files that do not depend on the settings, such as a file that is
+    /// not tracked yet.
+    pub fn show_fixed_files(&self, files: Vec<FileDiff>) {
+        self.source.replace(None);
+        self.show_files(files);
+    }
+
+    fn settings(&self) -> DiffSettings {
+        DiffSettings {
+            ignore_whitespace: self.whitespace_check.is_active(),
+        }
+    }
+
+    /// Takes the diff again from the source.
+    fn refresh(&self) -> Result<(), git2::Error> {
+        let Some(source) = self.source.borrow().clone() else {
+            return Ok(());
+        };
+        let settings = self.settings();
+        let mut files = source(settings)?;
+        for file in &mut files {
+            file.whitespace_ignored = settings.ignore_whitespace;
+        }
+        self.show_files(files);
+        Ok(())
+    }
+
+    fn whitespace_toggled(&self) {
+        let hide = self.whitespace_check.is_active();
+        if let Err(err) = app_settings::save_hide_whitespace(&app_settings::whitespace_path(), hide)
+        {
+            eprintln!("Failed to save whether whitespace is hidden: {}", err);
+        }
+        dialog_when_error!("Failed to show the diff: {}", self.refresh());
+    }
+
     /// Shows files, those of a large diff and those viewed before closed at
     /// first. See `diff::initially_open`.
-    pub fn show_files(&self, files: Vec<FileDiff>) {
+    fn show_files(&self, files: Vec<FileDiff>) {
         let viewed_keys = app_settings::load_viewed_changes(&app_settings::viewed_changes_path());
         let viewed: Vec<bool> = files
             .iter()

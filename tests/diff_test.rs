@@ -295,7 +295,7 @@ pub fn diff_trees_finds_renamed_files() {
 	let old = tree_of(&repo, &[("a.txt", &body), ("b.txt", &body), ("kept.txt", "kept\n")]);
 	let new = tree_of(&repo, &[("moved.txt", &body), ("c.txt", &changed), ("kept.txt", "kept\n")]);
 
-	let diff = diff::diff_trees(&repo, Some(&old), Some(&new)).unwrap();
+	let diff = diff::diff_trees(&repo, Some(&old), Some(&new), diff::DiffSettings::default()).unwrap();
 	let files = diff::files_from_diff(&diff).unwrap();
 
 	let summary: Vec<(FileStatus, String, usize)> =
@@ -479,4 +479,19 @@ pub fn revealing_unchanged_lines_keeps_the_change_key() {
 	file.reveal(1, diff::Reveal::All);
 
 	assert_eq!(key, file.change_key());
+}
+
+#[test]
+pub fn ignoring_whitespace_keeps_every_file_in_order() {
+	let dir = tempdir::TempDir::new("diff-trees").unwrap();
+	let repo = git2::Repository::init(dir.path()).unwrap();
+	let old = tree_of(&repo, &[("a.txt", "x = 1\ny = 2\n"), ("b.txt", "old\n")]);
+	let new = tree_of(&repo, &[("a.txt", "x  =  1\ny = 2\n"), ("b.txt", "new\n")]);
+	let settings = diff::DiffSettings { ignore_whitespace: true };
+
+	let diff = diff::diff_trees(&repo, Some(&old), Some(&new), settings).unwrap();
+	let files = diff::files_from_diff(&diff).unwrap();
+
+	let summary: Vec<(String, usize)> = files.iter().map(|f| (f.display_path(), f.hunks.len())).collect();
+	assert_eq!(vec![("a.txt".to_string(), 0), ("b.txt".to_string(), 1)], summary);
 }
