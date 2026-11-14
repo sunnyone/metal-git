@@ -1,5 +1,7 @@
 //! The diff view: a summary line above the files of a diff.
 
+mod diff_text_view;
+mod gutter;
 mod text;
 mod unified;
 

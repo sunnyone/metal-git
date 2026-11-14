@@ -1,0 +1,192 @@
+use gtk::prelude::*;
+use gtk::subclass::prelude::*;
+use gtk::{gdk, glib, graphene, pango};
+
+use super::diff_text_view::{DiffTextView, Row};
+use super::text;
+use crate::diff_model::LineKind;
+
+const PADDING: f32 = 6.0;
+const MIN_DIGITS: usize = 3;
+
+mod imp {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[derive(Default)]
+    pub struct LineNumberGutter {
+        pub view: glib::WeakRef<DiffTextView>,
+        pub font: RefCell<Option<pango::FontDescription>>,
+        pub digits: Cell<usize>,
+        pub digit_width: Cell<f32>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for LineNumberGutter {
+        const NAME: &'static str = "MetalGitLineNumberGutter";
+        type Type = super::LineNumberGutter;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for LineNumberGutter {}
+
+    impl WidgetImpl for LineNumberGutter {
+        fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
+            match orientation {
+                gtk::Orientation::Horizontal => {
+                    let width = self.preferred_width().ceil() as i32;
+                    (width, width, -1, -1)
+                }
+                _ => (0, 0, -1, -1),
+            }
+        }
+
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let Some(view) = self.view.upgrade() else {
+                return;
+            };
+            let width = WidgetExt::width(&*self.obj()) as f32;
+            let color = gdk::RGBA::parse(text::LINENO_COLOR).unwrap();
+
+            view.for_each_visible_row(|row, y, height| {
+                let (_, top) = view.buffer_to_window_coords(gtk::TextWindowType::Left, 0, y);
+                let area = graphene::Rect::new(0.0, top as f32, width, height as f32);
+                if let Some(background) = row.background() {
+                    snapshot.append_color(&background, &area);
+                }
+                self.draw_numbers(snapshot, row, &area, &color);
+            });
+        }
+    }
+
+    impl LineNumberGutter {
+        /// Two columns of line numbers and one of the sign, each a fixed number
+        /// of digits wide.
+        fn preferred_width(&self) -> f32 {
+            let digits = self.digits.get() as f32;
+            PADDING * 4.0 + self.digit_width.get() * (digits * 2.0 + 1.0)
+        }
+
+        fn draw_numbers(
+            &self,
+            snapshot: &gtk::Snapshot,
+            row: &Row,
+            area: &graphene::Rect,
+            color: &gdk::RGBA,
+        ) {
+            let Row::Line {
+                kind,
+                old_lineno,
+                new_lineno,
+            } = *row
+            else {
+                return;
+            };
+
+            let column = self.digit_width.get() * self.digits.get() as f32;
+            let old_right = PADDING + column;
+            let new_right = old_right + PADDING + column;
+            let sign_left = new_right + PADDING;
+            let sign = match kind {
+                LineKind::Added => "+",
+                LineKind::Removed => "-",
+                LineKind::Context => "",
+            };
+
+            if let Some(n) = old_lineno {
+                self.draw_text(snapshot, &n.to_string(), old_right, true, area, color);
+            }
+            if let Some(n) = new_lineno {
+                self.draw_text(snapshot, &n.to_string(), new_right, true, area, color);
+            }
+            self.draw_text(snapshot, sign, sign_left, false, area, color);
+        }
+
+        /// Draws text centered vertically in the area, either ending at `x` or
+        /// starting from it.
+        fn draw_text(
+            &self,
+            snapshot: &gtk::Snapshot,
+            text: &str,
+            x: f32,
+            align_right: bool,
+            area: &graphene::Rect,
+            color: &gdk::RGBA,
+        ) {
+            let layout = self.obj().create_pango_layout(Some(text));
+            layout.set_font_description(self.font.borrow().as_ref());
+            let (text_width, text_height) = layout.pixel_size();
+            let left = if align_right {
+                x - text_width as f32
+            } else {
+                x
+            };
+            let top = area.y() + (area.height() - text_height as f32) / 2.0;
+
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(left, top));
+            snapshot.append_layout(&layout, color);
+            snapshot.restore();
+        }
+    }
+}
+
+glib::wrapper! {
+    /// Line numbers drawn beside a diff, in columns of a fixed width, so that
+    /// they stay aligned whatever font the text of each line is drawn in.
+    pub struct LineNumberGutter(ObjectSubclass<imp::LineNumberGutter>)
+        @extends gtk::Widget,
+        @implements gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl LineNumberGutter {
+    /// Creates a gutter and places it on the left of the view.
+    pub fn attach(view: &DiffTextView) -> LineNumberGutter {
+        let gutter: LineNumberGutter = glib::Object::new();
+        gutter.imp().view.set(Some(view));
+        gutter.imp().digits.set(MIN_DIGITS);
+        view.set_gutter(gtk::TextWindowType::Left, Some(&gutter));
+
+        // Lines move when the view scrolls and when hunks fold or open, which
+        // changes the height of the content
+        if let Some(adjustment) = view.vadjustment() {
+            let g = gutter.downgrade();
+            adjustment.connect_value_changed(move |_| {
+                if let Some(gutter) = g.upgrade() {
+                    gutter.queue_draw();
+                }
+            });
+            let g = gutter.downgrade();
+            adjustment.connect_changed(move |_| {
+                if let Some(gutter) = g.upgrade() {
+                    gutter.queue_draw();
+                }
+            });
+        }
+        gutter
+    }
+
+    /// Sizes the columns for the rows the view now has.
+    pub fn refresh(&self) {
+        let imp = self.imp();
+        let Some(view) = imp.view.upgrade() else {
+            return;
+        };
+
+        imp.digits
+            .set(view.max_lineno().to_string().len().max(MIN_DIGITS));
+
+        // The same font as the text, but always the Latin one for the digits
+        let mut font = view.pango_context().font_description().unwrap_or_default();
+        if let Some(family) = text::latin_monospace_family(view.upcast_ref()) {
+            font.set_family(&family);
+        }
+        let layout = self.create_pango_layout(Some("0"));
+        layout.set_font_description(Some(&font));
+        imp.digit_width.set(layout.pixel_size().0 as f32);
+        imp.font.replace(Some(font));
+
+        self.queue_resize();
+        self.queue_draw();
+    }
+}

@@ -2,6 +2,7 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use super::diff_text_view::DiffTextView;
 use crate::diff_model::{DiffLine, FileDiff, FileStatus, LineKind};
 
 const BASE: &str = "base";
@@ -11,13 +12,18 @@ pub const ADDED: &str = "added";
 pub const REMOVED: &str = "removed";
 pub const ADDED_EMPHASIS: &str = "added-emphasis";
 pub const REMOVED_EMPHASIS: &str = "removed-emphasis";
-pub const LINENO: &str = "lineno";
 pub const NOTE: &str = "note";
+
+// Translucent so that they read well on light and dark themes
+pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
+pub const HUNK_HEADER_BACKGROUND: &str = "rgba(90,140,255,0.12)";
+pub const ADDED_BACKGROUND: &str = "rgba(46,160,67,0.16)";
+pub const REMOVED_BACKGROUND: &str = "rgba(248,81,73,0.16)";
+pub const LINENO_COLOR: &str = "rgba(127,127,127,0.85)";
 
 const OPEN_MARKER: &str = "▾";
 const CLOSED_MARKER: &str = "▸";
 
-/// Colors are translucent so that the same tags read well on light and dark themes.
 fn create_tag_table() -> gtk::TextTagTable {
     let table = gtk::TextTagTable::new();
     let tags = [
@@ -26,27 +32,16 @@ fn create_tag_table() -> gtk::TextTagTable {
         gtk::TextTag::builder()
             .name(FILE_HEADER)
             .weight(700)
-            .paragraph_background("rgba(127,127,127,0.22)")
             .pixels_above_lines(10)
             .pixels_below_lines(4)
             .build(),
         gtk::TextTag::builder()
             .name(HUNK_HEADER)
             .foreground("rgba(90,130,210,1)")
-            .paragraph_background("rgba(90,140,255,0.12)")
             .build(),
-        gtk::TextTag::builder()
-            .name(ADDED)
-            .paragraph_background("rgba(46,160,67,0.16)")
-            .build(),
-        gtk::TextTag::builder()
-            .name(REMOVED)
-            .paragraph_background("rgba(248,81,73,0.16)")
-            .build(),
-        gtk::TextTag::builder()
-            .name(LINENO)
-            .foreground("rgba(127,127,127,0.85)")
-            .build(),
+        // Only mark the lines; DiffTextView draws their backgrounds
+        gtk::TextTag::new(Some(ADDED)),
+        gtk::TextTag::new(Some(REMOVED)),
         gtk::TextTag::builder()
             .name(NOTE)
             .foreground("rgba(127,127,127,1)")
@@ -68,20 +63,18 @@ fn create_tag_table() -> gtk::TextTagTable {
     table
 }
 
-pub fn create_text_view() -> gtk::TextView {
+pub fn create_text_view() -> DiffTextView {
     let buffer = gtk::TextBuffer::builder()
         .tag_table(&create_tag_table())
         .build();
-    let view = gtk::TextView::builder()
-        .editable(false)
-        .cursor_visible(false)
-        .monospace(true)
-        .buffer(&buffer)
-        .top_margin(4)
-        .bottom_margin(4)
-        .build();
+    let view = DiffTextView::new(&buffer);
+    view.set_editable(false);
+    view.set_cursor_visible(false);
+    view.set_monospace(true);
+    view.set_top_margin(4);
+    view.set_bottom_margin(4);
 
-    if let Some(family) = latin_monospace_family(&view) {
+    if let Some(family) = latin_monospace_family(view.upcast_ref()) {
         let base = buffer.tag_table().lookup(BASE).unwrap();
         base.set_family(Some(&family));
     }
@@ -93,10 +86,10 @@ pub fn create_text_view() -> gtk::TextView {
 /// Digits, spaces and punctuation belong to no script, so Pango draws them in
 /// the font of the text around them, or in the font of the locale on a line
 /// with nothing else, such as an empty line. In a Japanese locale that is a
-/// Japanese font with other widths, which shifts line numbers and indentation.
+/// Japanese font with other widths, which shifts indentation and columns.
 /// Naming the Latin font keeps them in one font, while the characters it does
 /// not have still fall back to the other fonts.
-fn latin_monospace_family(view: &gtk::TextView) -> Option<String> {
+pub fn latin_monospace_family(view: &gtk::TextView) -> Option<String> {
     let context = view.pango_context();
     let mut desc = gtk::pango::FontDescription::new();
     desc.set_family("monospace");
@@ -122,13 +115,6 @@ pub fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
 
 pub fn insert(buffer: &gtk::TextBuffer, iter: &mut gtk::TextIter, text: &str, tags: &[&str]) {
     buffer.insert_with_tags_by_name(iter, text, tags);
-}
-
-pub fn lineno(n: Option<u32>) -> String {
-    match n {
-        Some(n) => format!("{:>5} ", n),
-        None => "      ".to_string(),
-    }
 }
 
 pub fn line_tags(kind: LineKind) -> (Option<&'static str>, &'static str) {
