@@ -13,11 +13,6 @@ pub const REMOVED: &str = "removed";
 pub const ADDED_EMPHASIS: &str = "added-emphasis";
 pub const REMOVED_EMPHASIS: &str = "removed-emphasis";
 pub const NOTE: &str = "note";
-const STATUS_ADDED: &str = "status-added";
-const STATUS_DELETED: &str = "status-deleted";
-const STATUS_MODIFIED: &str = "status-modified";
-const STATUS_RENAMED: &str = "status-renamed";
-const STATUS_OTHER: &str = "status-other";
 /// The line counts on the head line of a file, which matter less than its path
 const NOTE_COUNTS: &str = "note-counts";
 /// Carried by the lines of a file below its head line, which it indents
@@ -69,14 +64,6 @@ fn create_tag_table() -> gtk::TextTagTable {
             .foreground("rgba(127,127,127,1)")
             .weight(400)
             .build(),
-        // Badges of the status of a file, in the colors many Git clients use:
-        // green for added, red for deleted, amber for modified, and blue for
-        // renamed or copied
-        status_tag(STATUS_ADDED, "46,160,67"),
-        status_tag(STATUS_DELETED, "218,54,51"),
-        status_tag(STATUS_MODIFIED, "191,135,0"),
-        status_tag(STATUS_RENAMED, "56,120,230"),
-        status_tag(STATUS_OTHER, "127,127,127"),
         // Defined last so that they draw over the line backgrounds
         gtk::TextTag::builder()
             .name(ADDED_EMPHASIS)
@@ -90,15 +77,23 @@ fn create_tag_table() -> gtk::TextTagTable {
     for tag in &tags {
         table.add(tag);
     }
+    // Badges of the status of a file, drawn over the line backgrounds
+    for status in FileStatus::ALL {
+        table.add(&status_tag(status));
+    }
     table
 }
 
-/// A badge of white bold text on a solid color, given as "r,g,b".
-fn status_tag(name: &str, rgb: &str) -> gtk::TextTag {
+fn status_tag_name(status: FileStatus) -> String {
+    format!("status-{}", status.letter())
+}
+
+/// A badge of white bold text on the color of a status.
+fn status_tag(status: FileStatus) -> gtk::TextTag {
     gtk::TextTag::builder()
-        .name(name)
+        .name(status_tag_name(status))
         .foreground("white")
-        .background(format!("rgb({})", rgb))
+        .background(super::status_color(status))
         .weight(700)
         .build()
 }
@@ -206,26 +201,15 @@ pub fn insert_content(
     insert(buffer, iter, "\n", tags);
 }
 
-/// The letter of a status, as `git status --short` and many Git clients show
-/// it, and the tag that colors it.
-fn status_badge(status: FileStatus) -> (&'static str, &'static str) {
-    match status {
-        FileStatus::Added => ("A", STATUS_ADDED),
-        FileStatus::Deleted => ("D", STATUS_DELETED),
-        FileStatus::Modified => ("M", STATUS_MODIFIED),
-        FileStatus::Renamed => ("R", STATUS_RENAMED),
-        FileStatus::Copied => ("C", STATUS_RENAMED),
-        FileStatus::Other => ("?", STATUS_OTHER),
-    }
-}
-
 /// The label of the head line of a file, in segments with the tags of each:
 /// a badge of its status, which is one letter wide so that the paths line up,
 /// then its path, which matters most, then its line counts.
-pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<&'static str>)> {
-    let (letter, tag) = status_badge(file.status);
+pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<String>)> {
     vec![
-        (format!(" {} ", letter), vec![tag]),
+        (
+            format!(" {} ", file.status.letter()),
+            vec![status_tag_name(file.status)],
+        ),
         (format!(" {}", file.display_path()), vec![]),
         (
             format!(
@@ -233,7 +217,7 @@ pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<&'static str>)>
                 file.count_lines(LineKind::Added),
                 file.count_lines(LineKind::Removed)
             ),
-            vec![NOTE_COUNTS],
+            vec![NOTE_COUNTS.to_string()],
         ),
     ]
 }
@@ -262,9 +246,14 @@ pub fn insert_file_head(
     let start = iter.offset();
     let fold = folds.len();
     let segments = file_header_segments(file);
+    let tag_refs: Vec<Vec<&str>> = segments
+        .iter()
+        .map(|(_, tags)| tags.iter().map(|t| t.as_str()).collect())
+        .collect();
     let segment_refs: Vec<(&str, &[&str])> = segments
         .iter()
-        .map(|(text, tags)| (text.as_str(), tags.as_slice()))
+        .zip(&tag_refs)
+        .map(|((text, _), tags)| (text.as_str(), tags.as_slice()))
         .collect();
     let body = folds.insert_head_segments(iter, &segment_refs, &[FILE_HEADER], open);
     let head = buffer.create_mark(None, &buffer.iter_at_offset(start), false);

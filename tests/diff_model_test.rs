@@ -269,3 +269,10 @@ pub fn initially_open_always_opens_a_lone_file() {
 
 	assert_eq!(vec![true], diff_model::initially_open(&files));
 }
+
+#[test]
+pub fn statuses_show_the_letters_of_git_status() {
+	let letters: Vec<&str> = FileStatus::ALL.iter().map(|s| s.letter()).collect();
+
+	assert_eq!(vec!["A", "D", "M", "R", "C", "?"], letters);
+}

@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff_model::{self, FileDiff, LineKind};
+use crate::diff_model::{self, FileDiff, FileStatus, LineKind};
 use split::SplitView;
 use unified::UnifiedView;
 
@@ -22,6 +22,29 @@ fn layout_label(layout: DiffLayout) -> &'static str {
         DiffLayout::Unified => "Unified",
         DiffLayout::Split => "Split",
     }
+}
+
+/// The color of the badge of a status, in the colors many Git clients use:
+/// green for added, red for deleted, amber for modified, and blue for renamed
+/// or copied. The letter on it is white.
+pub fn status_color(status: FileStatus) -> &'static str {
+    match status {
+        FileStatus::Added => "#2ea043",
+        FileStatus::Deleted => "#da3633",
+        FileStatus::Modified => "#bf8700",
+        FileStatus::Renamed | FileStatus::Copied => "#3878e6",
+        FileStatus::Other => "#7f7f7f",
+    }
+}
+
+/// Pango markup of the badge of a status: its letter, white and bold on its
+/// color, one monospace letter wide so that what follows lines up.
+pub fn status_badge_markup(status: FileStatus) -> String {
+    format!(
+        "<span font_family=\"monospace\" weight=\"bold\" foreground=\"white\" background=\"{}\"> {} </span>",
+        status_color(status),
+        status.letter()
+    )
 }
 
 /// The files a viewer shows and which of them are open, shared by its layouts

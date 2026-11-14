@@ -115,6 +115,30 @@ pub enum FileStatus {
     Other,
 }
 
+impl FileStatus {
+    pub const ALL: [FileStatus; 6] = [
+        FileStatus::Added,
+        FileStatus::Deleted,
+        FileStatus::Modified,
+        FileStatus::Renamed,
+        FileStatus::Copied,
+        FileStatus::Other,
+    ];
+
+    /// The letter of the status, as `git status --short` and many Git clients
+    /// show it.
+    pub fn letter(self) -> &'static str {
+        match self {
+            FileStatus::Added => "A",
+            FileStatus::Deleted => "D",
+            FileStatus::Modified => "M",
+            FileStatus::Renamed => "R",
+            FileStatus::Copied => "C",
+            FileStatus::Other => "?",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FileDiff {
     pub old_path: Option<String>,
@@ -487,7 +511,7 @@ fn path_of(file: git2::DiffFile) -> Option<String> {
     file.path().and_then(|p| p.to_str()).map(|s| s.to_string())
 }
 
-fn status_of(delta: Delta) -> FileStatus {
+pub fn status_of(delta: Delta) -> FileStatus {
     match delta {
         Delta::Added | Delta::Untracked => FileStatus::Added,
         Delta::Deleted => FileStatus::Deleted,

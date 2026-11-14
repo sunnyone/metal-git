@@ -4,9 +4,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::commit_diff_util;
-use crate::commit_diff_util::ListCommitDiffResult;
+use crate::commit_diff_util::{ListCommitDiffFileEntry, ListCommitDiffResult};
 use crate::diff_model;
-use crate::diff_view::DiffViewer;
+use crate::diff_view::{self, DiffViewer};
 use crate::repository_manager::RepositoryManager;
 
 pub struct CommitDiffPanel {
@@ -59,11 +59,7 @@ impl CommitDiffPanel {
         clear_list_box(&self.diff_list_box);
 
         for entry in &result.files {
-            let label = gtk::Label::builder()
-                .label(entry.format_file_move())
-                .xalign(0.0)
-                .build();
-            self.diff_list_box.append(&label);
+            self.diff_list_box.append(&file_row(entry));
         }
 
         self.current_list_result.replace(Some(Rc::new(result)));
@@ -112,6 +108,26 @@ impl CommitDiffPanel {
         self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
         Ok(())
     }
+}
+
+/// A row of the list: the badge of the status of a file, as on its head line
+/// in the diff, then its path.
+fn file_row(entry: &ListCommitDiffFileEntry) -> gtk::Box {
+    let badge = gtk::Label::builder()
+        .use_markup(true)
+        .label(diff_view::status_badge_markup(entry.status))
+        .build();
+    let path = gtk::Label::builder()
+        .label(entry.format_file_move())
+        .xalign(0.0)
+        .build();
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    row.append(&badge);
+    row.append(&path);
+    row
 }
 
 fn clear_list_box(list_box: &gtk::ListBox) {

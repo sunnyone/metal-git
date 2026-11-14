@@ -1,10 +1,12 @@
 use git2::{Error, Oid};
 
+use crate::diff_model::{self, FileStatus};
 use crate::repository_manager::RepositoryManager;
 
 pub struct ListCommitDiffFileEntry {
     pub new_file_path: Option<String>,
     pub old_file_path: Option<String>,
+    pub status: FileStatus,
 }
 
 pub struct ListCommitDiffResult {
@@ -28,7 +30,8 @@ pub fn list_commit_diff_files(repository_manager: &RepositoryManager, oid: Oid) 
         &mut |delta, _| {
             let file_entry = ListCommitDiffFileEntry {
                 old_file_path: delta.old_file().path().and_then(|p| p.to_str()).map(|s| s.to_string()),
-                new_file_path: delta.new_file().path().and_then(|p| p.to_str()).map(|s| s.to_string())
+                new_file_path: delta.new_file().path().and_then(|p| p.to_str()).map(|s| s.to_string()),
+                status: diff_model::status_of(delta.status()),
             };
             files.push(file_entry);
             true
