@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff_model::{FileDiff, LineKind};
+use crate::diff_model::{self, FileDiff, LineKind};
 use split::SplitView;
 use unified::UnifiedView;
 
@@ -24,15 +24,25 @@ fn layout_label(layout: DiffLayout) -> &'static str {
     }
 }
 
+/// The files a viewer shows and which of them are open, shared by its layouts
+/// so that a file opened in one stays open in the other.
+#[derive(Default)]
+struct Content {
+    files: Vec<FileDiff>,
+    open: Vec<bool>,
+}
+
+type SharedContent = Rc<RefCell<Content>>;
+
 pub struct DiffViewer {
     root: gtk::Box,
     summary: gtk::Label,
     layout_dropdown: gtk::DropDown,
     stack: gtk::Stack,
-    unified: UnifiedView,
-    split: SplitView,
+    unified: Rc<UnifiedView>,
+    split: Rc<SplitView>,
     /// Kept to show again in the other layout
-    files: RefCell<Vec<FileDiff>>,
+    content: SharedContent,
 }
 
 impl DiffViewer {
@@ -58,8 +68,9 @@ impl DiffViewer {
         toolbar.append(&summary);
         toolbar.append(&layout_dropdown);
 
-        let unified = UnifiedView::new();
-        let split = SplitView::new();
+        let content = SharedContent::default();
+        let unified = UnifiedView::new(content.clone());
+        let split = SplitView::new(content.clone());
         let stack = gtk::Stack::builder().hexpand(true).vexpand(true).build();
         stack.add_named(&unified.widget(), Some(layout_label(DiffLayout::Unified)));
         stack.add_named(&split.widget(), Some(layout_label(DiffLayout::Split)));
@@ -84,7 +95,7 @@ impl DiffViewer {
             stack,
             unified,
             split,
-            files: RefCell::new(Vec::new()),
+            content,
         });
 
         let w = Rc::downgrade(&viewer);
@@ -101,10 +112,21 @@ impl DiffViewer {
         self.root.clone().upcast()
     }
 
-    pub fn show_files(&self, files: &[FileDiff]) {
-        self.files.replace(files.to_vec());
-        self.summary.set_text(&summary_text(files));
+    /// Shows files, those of a large diff closed at first. See
+    /// `diff_model::initially_open`.
+    pub fn show_files(&self, files: Vec<FileDiff>) {
+        self.summary.set_text(&summary_text(&files));
+        let open = diff_model::initially_open(&files);
+        self.content.replace(Content { files, open });
         self.render();
+    }
+
+    /// Opens the file at an index of the files shown, and scrolls to it.
+    pub fn scroll_to_file(&self, file_index: usize) {
+        match self.layout() {
+            DiffLayout::Unified => self.unified.scroll_to_file(file_index),
+            DiffLayout::Split => self.split.scroll_to_file(file_index),
+        }
     }
 
     fn layout(&self) -> DiffLayout {
@@ -122,10 +144,9 @@ impl DiffViewer {
 
     fn render(&self) {
         let layout = self.layout();
-        let files = self.files.borrow();
         match layout {
-            DiffLayout::Unified => self.unified.show(&files),
-            DiffLayout::Split => self.split.show(&files),
+            DiffLayout::Unified => self.unified.show(),
+            DiffLayout::Split => self.split.show(),
         }
         self.stack.set_visible_child_name(layout_label(layout));
     }

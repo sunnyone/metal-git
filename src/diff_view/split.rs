@@ -1,10 +1,12 @@
 use gtk::pango;
 use gtk::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, Folds};
+use super::text::{self, FileSlot, Folds};
+use super::SharedContent;
 use crate::diff_model::{DiffLine, FileDiff};
 
 /// One side of a split view.
@@ -45,18 +47,18 @@ impl Side {
         iter: &mut gtk::TextIter,
         rows: &mut RowRecorder,
         line: Option<&DiffLine>,
-        body: &str,
+        bodies: &[&str],
     ) -> i32 {
         let buffer = self.view.buffer();
         let start = iter.line();
         let Some(line) = line else {
             rows.set(iter, Row::Filler);
-            text::insert(&buffer, iter, "\n", &[body]);
+            text::insert(&buffer, iter, "\n", bodies);
             return start;
         };
 
         let (line_tag, _) = text::line_tags(line.kind);
-        let mut tags = vec![body];
+        let mut tags = bodies.to_vec();
         tags.extend(line_tag);
         rows.set(iter, Row::line(line));
         text::insert_content(&buffer, iter, line, &tags);
@@ -83,11 +85,35 @@ impl Side {
         buffer.apply_tag_by_name(&name, &start, &end);
     }
 
+    /// Starts a file: records its head row and inserts its head line.
+    fn insert_file_head(
+        &self,
+        iter: &mut gtk::TextIter,
+        rows: &mut RowRecorder,
+        file: &FileDiff,
+        open: bool,
+    ) -> FileSlot {
+        rows.set(iter, Row::FileHeader);
+        text::insert_file_head(&self.folds, iter, file, open)
+    }
+
     fn finish(&self, rows: RowRecorder) {
         text::apply_base_font(&self.view.buffer());
         self.view.set_rows(rows.into_rows());
         self.gutter.refresh();
         self.scrolled.hadjustment().set_value(0.0);
+    }
+
+    /// Finishes inserting lines from `start`, a line and an offset, to `end`.
+    fn finish_load(&self, start: (usize, i32), end: &gtk::TextIter, rows: RowRecorder) {
+        let (start_line, start_offset) = start;
+        let buffer = self.view.buffer();
+        text::finish_file_body(&buffer, &buffer.iter_at_offset(start_offset), end);
+        self.view.insert_rows(
+            start_line,
+            rows.into_rows_between(start_line, end.line() as usize),
+        );
+        self.gutter.refresh();
     }
 }
 
@@ -135,28 +161,20 @@ pub struct SplitView {
     root: gtk::Box,
     old: Side,
     new: Side,
+    content: SharedContent,
+    /// Indexed like the files of `content`, with the old side first. Both sides
+    /// add their folds in the same order, so that a fold has the same index on
+    /// both.
+    slots: RefCell<Vec<(FileSlot, FileSlot)>>,
 }
 
 impl SplitView {
-    pub fn new() -> SplitView {
+    pub fn new(content: SharedContent) -> Rc<SplitView> {
         let old = Side::new(Columns::Old, None);
         let new = Side::new(Columns::New, Some(&old.scrolled.vadjustment()));
         // One scroll bar on the right is enough for both
         old.scrolled
             .set_vscrollbar_policy(gtk::PolicyType::External);
-
-        let w = Rc::downgrade(&new.folds);
-        old.folds.connect_toggled(move |index, open| {
-            if let Some(folds) = w.upgrade() {
-                folds.set_open(index, open);
-            }
-        });
-        let w = Rc::downgrade(&old.folds);
-        new.folds.connect_toggled(move |index, open| {
-            if let Some(folds) = w.upgrade() {
-                folds.set_open(index, open);
-            }
-        });
 
         let root = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -167,14 +185,42 @@ impl SplitView {
         root.append(&old.scrolled);
         root.append(&new.scrolled);
 
-        SplitView { root, old, new }
+        let split = Rc::new(SplitView {
+            root,
+            old,
+            new,
+            content,
+            slots: RefCell::new(Vec::new()),
+        });
+
+        let w = Rc::downgrade(&split);
+        split.old.folds.connect_toggled(move |index, open| {
+            if let Some(split) = w.upgrade() {
+                split.new.folds.set_open(index, open);
+                split.fold_toggled(index, open);
+            }
+        });
+        let w = Rc::downgrade(&split);
+        split.new.folds.connect_toggled(move |index, open| {
+            if let Some(split) = w.upgrade() {
+                split.old.folds.set_open(index, open);
+                split.fold_toggled(index, open);
+            }
+        });
+        split
     }
 
     pub fn widget(&self) -> gtk::Widget {
         self.root.clone().upcast()
     }
 
-    pub fn show(&self, files: &[FileDiff]) {
+    pub fn show(&self) {
+        let mut slots = self.slots.borrow_mut();
+        for (old_slot, new_slot) in slots.drain(..) {
+            self.old.view.buffer().delete_mark(&old_slot.head);
+            self.new.view.buffer().delete_mark(&new_slot.head);
+        }
+        drop(slots);
         self.old.clear();
         self.new.clear();
         let old_buffer = self.old.view.buffer();
@@ -183,60 +229,182 @@ impl SplitView {
         let mut new_iter = new_buffer.start_iter();
         let mut old_rows = RowRecorder::default();
         let mut new_rows = RowRecorder::default();
-        let old_heights = LineHeights::new(&self.old.view);
-        let new_heights = LineHeights::new(&self.new.view);
+        let heights = (
+            LineHeights::new(&self.old.view),
+            LineHeights::new(&self.new.view),
+        );
+        let mut slots = Vec::new();
 
-        for file in files {
-            let header = text::file_header_text(file);
-            old_rows.set(&old_iter, Row::FileHeader);
-            new_rows.set(&new_iter, Row::FileHeader);
-            text::insert(&old_buffer, &mut old_iter, &header, &[text::FILE_HEADER]);
-            text::insert(&new_buffer, &mut new_iter, &header, &[text::FILE_HEADER]);
-            if file.binary {
-                text::insert(&old_buffer, &mut old_iter, "Binary file\n", &[text::NOTE]);
-                text::insert(&new_buffer, &mut new_iter, "Binary file\n", &[text::NOTE]);
-                continue;
-            }
-
-            for hunk in &file.hunks {
-                old_rows.set(&old_iter, Row::HunkHeader);
-                new_rows.set(&new_iter, Row::HunkHeader);
-                // Both sides add their folds in the same order, so that a fold
-                // has the same index on both
-                let old_body = self.old.folds.insert_head(
-                    &mut old_iter,
-                    &hunk.header,
-                    &[text::HUNK_HEADER],
-                    true,
+        let mut content = self.content.borrow_mut();
+        let content = &mut *content;
+        for (file, &open) in content.files.iter_mut().zip(&content.open) {
+            let mut old_slot = self
+                .old
+                .insert_file_head(&mut old_iter, &mut old_rows, file, open);
+            let mut new_slot = self
+                .new
+                .insert_file_head(&mut new_iter, &mut new_rows, file, open);
+            if open {
+                file.emphasize();
+                self.insert_body(
+                    (&mut old_iter, &mut new_iter),
+                    (&mut old_rows, &mut new_rows),
+                    &heights,
+                    file,
+                    (&old_slot.body, &new_slot.body),
                 );
-                let new_body = self.new.folds.insert_head(
-                    &mut new_iter,
-                    &hunk.header,
-                    &[text::HUNK_HEADER],
-                    true,
-                );
-
-                for (old, new) in hunk.side_by_side() {
-                    let old_line =
-                        self.old
-                            .insert_line(&mut old_iter, &mut old_rows, old, &old_body);
-                    let new_line =
-                        self.new
-                            .insert_line(&mut new_iter, &mut new_rows, new, &new_body);
-
-                    let old_height = old_heights.of(old);
-                    let new_height = new_heights.of(new);
-                    if old_height < new_height {
-                        self.old.pad_line(old_line, new_height - old_height);
-                    } else if new_height < old_height {
-                        self.new.pad_line(new_line, old_height - new_height);
-                    }
-                }
+                old_slot.loaded = true;
+                new_slot.loaded = true;
             }
+            slots.push((old_slot, new_slot));
         }
 
         self.old.finish(old_rows);
         self.new.finish(new_rows);
+        self.slots.replace(slots);
         self.old.scrolled.vadjustment().set_value(0.0);
+    }
+
+    /// Opens a file if it is closed and scrolls its head line to the top.
+    pub fn scroll_to_file(&self, file_index: usize) {
+        let Some(fold) = self.slots.borrow().get(file_index).map(|s| s.0.fold) else {
+            return;
+        };
+        self.old.folds.set_open(fold, true);
+        self.new.folds.set_open(fold, true);
+        self.file_toggled(file_index, true);
+
+        // The new side follows, as the sides share their vertical adjustment
+        text::scroll_to_file_head(
+            self.old.view.upcast_ref(),
+            &self.slots.borrow()[file_index].0,
+        );
+    }
+
+    fn fold_toggled(&self, fold: usize, open: bool) {
+        let file_index = self.slots.borrow().iter().position(|s| s.0.fold == fold);
+        if let Some(file_index) = file_index {
+            self.file_toggled(file_index, open);
+        }
+    }
+
+    fn file_toggled(&self, file_index: usize, open: bool) {
+        self.content.borrow_mut().open[file_index] = open;
+        if open {
+            self.load(file_index);
+        }
+    }
+
+    /// Inserts the lines of a file that was closed when it was shown.
+    fn load(&self, file_index: usize) {
+        let mut slots = self.slots.borrow_mut();
+        let (old_slot, new_slot) = &mut slots[file_index];
+        if old_slot.loaded {
+            return;
+        }
+        old_slot.loaded = true;
+        new_slot.loaded = true;
+
+        let mut content = self.content.borrow_mut();
+        let file = &mut content.files[file_index];
+        file.emphasize();
+
+        let old_buffer = self.old.view.buffer();
+        let new_buffer = self.new.view.buffer();
+        let mut old_iter = text::file_body_iter(&old_buffer, old_slot);
+        let mut new_iter = text::file_body_iter(&new_buffer, new_slot);
+        let old_start = (old_iter.line() as usize, old_iter.offset());
+        let new_start = (new_iter.line() as usize, new_iter.offset());
+        let mut old_rows = RowRecorder::default();
+        let mut new_rows = RowRecorder::default();
+        let heights = (
+            LineHeights::new(&self.old.view),
+            LineHeights::new(&self.new.view),
+        );
+        self.insert_body(
+            (&mut old_iter, &mut new_iter),
+            (&mut old_rows, &mut new_rows),
+            &heights,
+            file,
+            (&old_slot.body, &new_slot.body),
+        );
+
+        self.old.finish_load(old_start, &old_iter, old_rows);
+        self.new.finish_load(new_start, &new_iter, new_rows);
+    }
+
+    /// Inserts the hunks of a file on both sides, all carrying the body tag of
+    /// the file on their side.
+    fn insert_body(
+        &self,
+        iters: (&mut gtk::TextIter, &mut gtk::TextIter),
+        rows: (&mut RowRecorder, &mut RowRecorder),
+        heights: &(LineHeights, LineHeights),
+        file: &FileDiff,
+        file_bodies: (&str, &str),
+    ) {
+        let (old_iter, new_iter) = iters;
+        let (old_rows, new_rows) = rows;
+        let (old_heights, new_heights) = heights;
+        let (old_file_body, new_file_body) = file_bodies;
+        let old_buffer = self.old.view.buffer();
+        let new_buffer = self.new.view.buffer();
+
+        if file.binary {
+            let note = "Binary file\n";
+            text::insert(
+                &old_buffer,
+                old_iter,
+                note,
+                &[text::NOTE, text::FILE_BODY, old_file_body],
+            );
+            text::insert(
+                &new_buffer,
+                new_iter,
+                note,
+                &[text::NOTE, text::FILE_BODY, new_file_body],
+            );
+            return;
+        }
+
+        for hunk in &file.hunks {
+            old_rows.set(old_iter, Row::HunkHeader);
+            new_rows.set(new_iter, Row::HunkHeader);
+            let old_body = self.old.folds.insert_head(
+                old_iter,
+                &hunk.header,
+                &[text::HUNK_HEADER, text::FILE_BODY, old_file_body],
+                true,
+            );
+            let new_body = self.new.folds.insert_head(
+                new_iter,
+                &hunk.header,
+                &[text::HUNK_HEADER, text::FILE_BODY, new_file_body],
+                true,
+            );
+
+            for (old, new) in hunk.side_by_side() {
+                let old_line = self.old.insert_line(
+                    old_iter,
+                    old_rows,
+                    old,
+                    &[text::FILE_BODY, old_file_body, &old_body],
+                );
+                let new_line = self.new.insert_line(
+                    new_iter,
+                    new_rows,
+                    new,
+                    &[text::FILE_BODY, new_file_body, &new_body],
+                );
+
+                let old_height = old_heights.of(old);
+                let new_height = new_heights.of(new);
+                if old_height < new_height {
+                    self.old.pad_line(old_line, new_height - old_height);
+                } else if new_height < old_height {
+                    self.new.pad_line(new_line, old_height - new_height);
+                }
+            }
+        }
     }
 }
