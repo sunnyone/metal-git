@@ -222,6 +222,19 @@ pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<String>)> {
     ]
 }
 
+/// A note shown in place of the lines of a file that has none to show: a
+/// binary file, or one whose content did not change, such as a file that was
+/// only renamed.
+pub fn body_note(file: &FileDiff) -> Option<&'static str> {
+    if file.binary {
+        Some("Binary file\n")
+    } else if file.hunks.is_empty() {
+        Some("No changes in the content\n")
+    } else {
+        None
+    }
+}
+
 /// Where a file is in a view, and whether its lines are in the buffer yet.
 pub struct FileSlot {
     /// The fold that the head line of the file opens and closes

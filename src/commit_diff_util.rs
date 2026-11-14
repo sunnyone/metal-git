@@ -23,7 +23,7 @@ pub fn list_commit_diff_files(repository_manager: &RepositoryManager, oid: Oid) 
 
     let parent_tree = parent_commit.tree()?;
     let current_tree = current_commit.tree()?;
-    let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
+    let diff = diff_model::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
 
     let mut files: Vec<ListCommitDiffFileEntry> = Vec::new();
     diff.foreach(

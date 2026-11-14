@@ -138,11 +138,11 @@ impl UnifiedView {
         file_body: &str,
     ) {
         let buffer = self.view.buffer();
-        if file.binary {
+        if let Some(note) = text::body_note(file) {
             text::insert(
                 &buffer,
                 iter,
-                "Binary file\n",
+                note,
                 &[text::NOTE, text::FILE_BODY, file_body],
             );
             return;
