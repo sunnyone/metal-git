@@ -10,6 +10,13 @@ const MIN_EMPHASIS_SIMILARITY: f32 = 0.5;
 /// similarity, to keep the comparison cheap.
 const MAX_ALIGNED_PAIRS: usize = 10_000;
 
+/// Files with more lines than this start closed, so that a large commit opens
+/// quickly. They are drawn when they are opened.
+pub const MAX_OPEN_FILE_LINES: usize = 2_000;
+
+/// Files start closed once the open ones would have more lines than this in total.
+pub const MAX_OPEN_TOTAL_LINES: usize = 10_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LineKind {
     Context,
@@ -115,6 +122,9 @@ pub struct FileDiff {
     pub status: FileStatus,
     pub binary: bool,
     pub hunks: Vec<DiffHunk>,
+    /// Whether the changed words of the line pairs are marked yet. Marking them
+    /// is left until the file is shown, as it is the costly part of a large diff.
+    pub emphasized: bool,
 }
 
 impl FileDiff {
@@ -143,6 +153,7 @@ impl FileDiff {
                 lines,
                 pairs: Vec::new(),
             }],
+            emphasized: true,
         }
     }
 
@@ -155,6 +166,22 @@ impl FileDiff {
         }
     }
 
+    /// The number of lines in all the hunks.
+    pub fn line_count(&self) -> usize {
+        self.hunks.iter().map(|hunk| hunk.lines.len()).sum()
+    }
+
+    /// Marks the changed words of the line pairs, unless they are marked already.
+    pub fn emphasize(&mut self) {
+        if self.emphasized {
+            return;
+        }
+        for hunk in &mut self.hunks {
+            hunk.pairs = emphasize_changes(&mut hunk.lines);
+        }
+        self.emphasized = true;
+    }
+
     pub fn count_lines(&self, kind: LineKind) -> usize {
         self.hunks
             .iter()
@@ -164,18 +191,42 @@ impl FileDiff {
     }
 }
 
+/// Which files to show open at first: those up to `MAX_OPEN_FILE_LINES` lines,
+/// in order, until the open ones reach `MAX_OPEN_TOTAL_LINES` lines in total.
+/// A lone file is always open.
+pub fn initially_open(files: &[FileDiff]) -> Vec<bool> {
+    if files.len() == 1 {
+        return vec![true];
+    }
+    let mut total = 0;
+    files
+        .iter()
+        .map(|file| {
+            let count = file.line_count();
+            let open = count <= MAX_OPEN_FILE_LINES && total + count <= MAX_OPEN_TOTAL_LINES;
+            if open {
+                total += count;
+            }
+            open
+        })
+        .collect()
+}
+
+/// The files of a diff, with their changed words not marked yet. See
+/// `FileDiff::emphasize`.
 pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
     (0..diff.deltas().len())
         .map(|index| {
             let delta = diff.get_delta(index).unwrap();
             match Patch::from_diff(diff, index)? {
-                Some(patch) => file_from_patch(&patch),
+                Some(patch) => file_from_patch_unemphasized(&patch),
                 None => Ok(FileDiff {
                     old_path: path_of(delta.old_file()),
                     new_path: path_of(delta.new_file()),
                     status: status_of(delta.status()),
                     binary: true,
                     hunks: Vec::new(),
+                    emphasized: true,
                 }),
             }
         })
@@ -183,6 +234,12 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
 }
 
 pub fn file_from_patch(patch: &Patch) -> Result<FileDiff, Error> {
+    let mut file = file_from_patch_unemphasized(patch)?;
+    file.emphasize();
+    Ok(file)
+}
+
+fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
     let delta = patch.delta();
     let mut hunks = Vec::new();
 
@@ -208,13 +265,12 @@ pub fn file_from_patch(patch: &Patch) -> Result<FileDiff, Error> {
             });
         }
 
-        let pairs = emphasize_changes(&mut lines);
         hunks.push(DiffHunk {
             header: String::from_utf8_lossy(hunk.header())
                 .trim_end()
                 .to_string(),
             lines,
-            pairs,
+            pairs: Vec::new(),
         });
     }
 
@@ -224,6 +280,7 @@ pub fn file_from_patch(patch: &Patch) -> Result<FileDiff, Error> {
         status: status_of(delta.status()),
         binary: delta.flags().is_binary(),
         hunks,
+        emphasized: false,
     })
 }
 

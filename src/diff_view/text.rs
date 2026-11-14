@@ -13,6 +13,15 @@ pub const REMOVED: &str = "removed";
 pub const ADDED_EMPHASIS: &str = "added-emphasis";
 pub const REMOVED_EMPHASIS: &str = "removed-emphasis";
 pub const NOTE: &str = "note";
+const STATUS_ADDED: &str = "status-added";
+const STATUS_DELETED: &str = "status-deleted";
+const STATUS_MODIFIED: &str = "status-modified";
+const STATUS_RENAMED: &str = "status-renamed";
+const STATUS_OTHER: &str = "status-other";
+/// The line counts on the head line of a file, which matter less than its path
+const NOTE_COUNTS: &str = "note-counts";
+/// Carried by the lines of a file below its head line, which it indents
+pub const FILE_BODY: &str = "file-body";
 
 // Translucent so that they read well on light and dark themes
 pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
@@ -20,6 +29,9 @@ pub const HUNK_HEADER_BACKGROUND: &str = "rgba(90,140,255,0.12)";
 pub const ADDED_BACKGROUND: &str = "rgba(46,160,67,0.16)";
 pub const REMOVED_BACKGROUND: &str = "rgba(248,81,73,0.16)";
 pub const FILLER_BACKGROUND: &str = "rgba(127,127,127,0.10)";
+pub const FILE_SEPARATOR_COLOR: &str = "rgba(127,127,127,0.65)";
+/// How far the lines of a file are indented from its head line
+const FILE_BODY_INDENT: i32 = 20;
 pub const LINENO_COLOR: &str = "rgba(127,127,127,0.85)";
 
 const OPEN_MARKER: &str = "▾";
@@ -44,10 +56,27 @@ fn create_tag_table() -> gtk::TextTagTable {
         gtk::TextTag::new(Some(ADDED)),
         gtk::TextTag::new(Some(REMOVED)),
         gtk::TextTag::builder()
+            .name(FILE_BODY)
+            .left_margin(FILE_BODY_INDENT)
+            .build(),
+        gtk::TextTag::builder()
             .name(NOTE)
             .foreground("rgba(127,127,127,1)")
             .style(gtk::pango::Style::Italic)
             .build(),
+        gtk::TextTag::builder()
+            .name(NOTE_COUNTS)
+            .foreground("rgba(127,127,127,1)")
+            .weight(400)
+            .build(),
+        // Badges of the status of a file, in the colors many Git clients use:
+        // green for added, red for deleted, amber for modified, and blue for
+        // renamed or copied
+        status_tag(STATUS_ADDED, "46,160,67"),
+        status_tag(STATUS_DELETED, "218,54,51"),
+        status_tag(STATUS_MODIFIED, "191,135,0"),
+        status_tag(STATUS_RENAMED, "56,120,230"),
+        status_tag(STATUS_OTHER, "127,127,127"),
         // Defined last so that they draw over the line backgrounds
         gtk::TextTag::builder()
             .name(ADDED_EMPHASIS)
@@ -62,6 +91,16 @@ fn create_tag_table() -> gtk::TextTagTable {
         table.add(tag);
     }
     table
+}
+
+/// A badge of white bold text on a solid color, given as "r,g,b".
+fn status_tag(name: &str, rgb: &str) -> gtk::TextTag {
+    gtk::TextTag::builder()
+        .name(name)
+        .foreground("white")
+        .background(format!("rgb({})", rgb))
+        .weight(700)
+        .build()
 }
 
 pub fn create_text_view() -> DiffTextView {
@@ -114,6 +153,15 @@ pub fn apply_base_font(buffer: &gtk::TextBuffer) {
     buffer.apply_tag_by_name(BASE, &buffer.start_iter(), &buffer.end_iter());
 }
 
+/// Finishes lines inserted between two file head lines: gives them the base
+/// font, and takes off the style of the head lines. Adjacent ranges of a tag
+/// join into one, so the lines inserted between two head lines fall inside
+/// the range of `FILE_HEADER`.
+pub fn finish_file_body(buffer: &gtk::TextBuffer, start: &gtk::TextIter, end: &gtk::TextIter) {
+    buffer.remove_tag_by_name(FILE_HEADER, start, end);
+    buffer.apply_tag_by_name(BASE, start, end);
+}
+
 pub fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
@@ -158,22 +206,110 @@ pub fn insert_content(
     insert(buffer, iter, "\n", tags);
 }
 
-pub fn file_header_text(file: &FileDiff) -> String {
-    let status = match file.status {
-        FileStatus::Added => "Added",
-        FileStatus::Deleted => "Deleted",
-        FileStatus::Modified => "Modified",
-        FileStatus::Renamed => "Renamed",
-        FileStatus::Copied => "Copied",
-        FileStatus::Other => "Changed",
-    };
-    format!(
-        " {}  {}    +{} −{}\n",
-        status,
-        file.display_path(),
-        file.count_lines(LineKind::Added),
-        file.count_lines(LineKind::Removed)
-    )
+/// The letter of a status, as `git status --short` and many Git clients show
+/// it, and the tag that colors it.
+fn status_badge(status: FileStatus) -> (&'static str, &'static str) {
+    match status {
+        FileStatus::Added => ("A", STATUS_ADDED),
+        FileStatus::Deleted => ("D", STATUS_DELETED),
+        FileStatus::Modified => ("M", STATUS_MODIFIED),
+        FileStatus::Renamed => ("R", STATUS_RENAMED),
+        FileStatus::Copied => ("C", STATUS_RENAMED),
+        FileStatus::Other => ("?", STATUS_OTHER),
+    }
+}
+
+/// The label of the head line of a file, in segments with the tags of each:
+/// a badge of its status, which is one letter wide so that the paths line up,
+/// then its path, which matters most, then its line counts.
+pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<&'static str>)> {
+    let (letter, tag) = status_badge(file.status);
+    vec![
+        (format!(" {} ", letter), vec![tag]),
+        (format!(" {}", file.display_path()), vec![]),
+        (
+            format!(
+                "    +{} −{}",
+                file.count_lines(LineKind::Added),
+                file.count_lines(LineKind::Removed)
+            ),
+            vec![NOTE_COUNTS],
+        ),
+    ]
+}
+
+/// Where a file is in a view, and whether its lines are in the buffer yet.
+pub struct FileSlot {
+    /// The fold that the head line of the file opens and closes
+    pub fold: usize,
+    /// At the start of the head line. It has right gravity, so that it stays on
+    /// its line when the lines of the file before are inserted.
+    pub head: gtk::TextMark,
+    /// The tag that the lines of the file carry
+    pub body: String,
+    /// The lines of a closed file are inserted only when it is opened
+    pub loaded: bool,
+}
+
+/// Inserts the head line of a file, which opens and closes the file when clicked.
+pub fn insert_file_head(
+    folds: &Folds,
+    iter: &mut gtk::TextIter,
+    file: &FileDiff,
+    open: bool,
+) -> FileSlot {
+    let buffer = iter.buffer();
+    let start = iter.offset();
+    let fold = folds.len();
+    let segments = file_header_segments(file);
+    let segment_refs: Vec<(&str, &[&str])> = segments
+        .iter()
+        .map(|(text, tags)| (text.as_str(), tags.as_slice()))
+        .collect();
+    let body = folds.insert_head_segments(iter, &segment_refs, &[FILE_HEADER], open);
+    let head = buffer.create_mark(None, &buffer.iter_at_offset(start), false);
+    FileSlot {
+        fold,
+        head,
+        body,
+        loaded: false,
+    }
+}
+
+/// Scrolls the head line of a file to the top. Lines that are not laid out yet
+/// have an estimated height, so the view scrolls once more after the layout of
+/// the buffer is done, which runs at a higher priority than the default idle.
+pub fn scroll_to_file_head(view: &gtk::TextView, slot: &FileSlot) {
+    view.scroll_to_mark(&slot.head, 0.0, true, 0.0, 0.0);
+    let view = view.clone();
+    let head = slot.head.clone();
+    gtk::glib::idle_add_local_once(move || {
+        if !head.is_deleted() {
+            view.scroll_to_mark(&head, 0.0, true, 0.0, 0.0);
+        }
+    });
+}
+
+/// Deletes the marks of the files shown before. Call it before showing others.
+pub fn forget_file_slots(buffer: &gtk::TextBuffer, slots: &mut Vec<FileSlot>) {
+    for slot in slots.drain(..) {
+        buffer.delete_mark(&slot.head);
+    }
+}
+
+/// Where the lines of a file go: the start of the line after its head line.
+pub fn file_body_iter(buffer: &gtk::TextBuffer, slot: &FileSlot) -> gtk::TextIter {
+    let mut iter = buffer.iter_at_mark(&slot.head);
+    iter.forward_line();
+    iter
+}
+
+/// Hides the lines of a closed fold. An open one leaves their visibility unset
+/// rather than visible, so that a closed fold around it, such as a file around
+/// a hunk, still hides them whatever the priorities of the tags.
+fn set_body_open(body: &gtk::TextTag, open: bool) {
+    body.set_invisible(!open);
+    body.set_property("invisible-set", !open);
 }
 
 struct Fold {
@@ -227,6 +363,11 @@ impl Folds {
         }
     }
 
+    /// The number of folds, which is the index the next one gets.
+    pub fn len(&self) -> usize {
+        self.folds.borrow().len()
+    }
+
     /// Inserts a head line and returns the name of the tag that the lines of the
     /// section must carry.
     pub fn insert_head(
@@ -236,16 +377,27 @@ impl Folds {
         tags: &[&str],
         open: bool,
     ) -> String {
+        self.insert_head_segments(iter, &[(label, &[])], tags, open)
+    }
+
+    /// Inserts a head line whose label is in segments, each with tags of its
+    /// own on top of `tags`, and returns the name of the tag that the lines of
+    /// the section must carry.
+    pub fn insert_head_segments(
+        &self,
+        iter: &mut gtk::TextIter,
+        label: &[(&str, &[&str])],
+        tags: &[&str],
+        open: bool,
+    ) -> String {
         let buffer = self.view.buffer();
         let table = buffer.tag_table();
         let mut folds = self.folds.borrow_mut();
         let index = folds.len();
 
         let head = gtk::TextTag::new(Some(&format!("fold-head-{}", index)));
-        let body = gtk::TextTag::builder()
-            .name(format!("fold-body-{}", index))
-            .invisible(!open)
-            .build();
+        let body = gtk::TextTag::new(Some(&format!("fold-body-{}", index)));
+        set_body_open(&body, open);
         table.add(&head);
         table.add(&body);
 
@@ -255,7 +407,13 @@ impl Folds {
 
         let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
         insert(&buffer, iter, marker, &head_tag_refs);
-        insert(&buffer, iter, &format!(" {}\n", label), &head_tag_refs);
+        insert(&buffer, iter, " ", &head_tag_refs);
+        for (text, extra_tags) in label {
+            let mut segment_tags = head_tag_refs.clone();
+            segment_tags.extend_from_slice(extra_tags);
+            insert(&buffer, iter, text, &segment_tags);
+        }
+        insert(&buffer, iter, "\n", &head_tag_refs);
 
         let body_name = body.name().unwrap().to_string();
         folds.push(Fold {
@@ -300,7 +458,7 @@ impl Folds {
         if fold.body.is_invisible() != open {
             return;
         }
-        fold.body.set_invisible(!open);
+        set_body_open(&fold.body, open);
 
         let buffer = self.view.buffer();
         let mut start = buffer.start_iter();

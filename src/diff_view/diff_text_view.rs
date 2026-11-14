@@ -46,7 +46,22 @@ impl Row {
         };
         Some(gdk::RGBA::parse(color).unwrap())
     }
+
+    /// Draws the background of a row in an area, and a line across its top
+    /// where a file starts.
+    pub fn draw_background(&self, snapshot: &gtk::Snapshot, area: &graphene::Rect) {
+        if let Some(color) = self.background() {
+            snapshot.append_color(&color, area);
+        }
+        if let Row::FileHeader = self {
+            let color = gdk::RGBA::parse(text::FILE_SEPARATOR_COLOR).unwrap();
+            let line = graphene::Rect::new(area.x(), area.y(), area.width(), FILE_SEPARATOR_WIDTH);
+            snapshot.append_color(&color, &line);
+        }
+    }
 }
+
+const FILE_SEPARATOR_WIDTH: f32 = 2.0;
 
 /// Collects the rows of a buffer while it is filled.
 #[derive(Default)]
@@ -68,6 +83,14 @@ impl RowRecorder {
 
     pub fn into_rows(self) -> Vec<Row> {
         self.rows
+    }
+
+    /// The rows of the lines from `start` to before `end`.
+    pub fn into_rows_between(self, start: usize, end: usize) -> Vec<Row> {
+        let mut rows = self.rows;
+        rows.resize(end.max(start), Row::Blank);
+        rows.drain(..start);
+        rows
     }
 }
 
@@ -98,15 +121,13 @@ mod imp {
                 let obj = self.obj();
                 let visible = obj.visible_rect();
                 obj.for_each_visible_row(|row, y, height| {
-                    if let Some(color) = row.background() {
-                        let area = graphene::Rect::new(
-                            visible.x() as f32,
-                            y as f32,
-                            visible.width() as f32,
-                            height as f32,
-                        );
-                        snapshot.append_color(&color, &area);
-                    }
+                    let area = graphene::Rect::new(
+                        visible.x() as f32,
+                        y as f32,
+                        visible.width() as f32,
+                        height as f32,
+                    );
+                    row.draw_background(&snapshot, &area);
                 });
             }
             self.parent_snapshot_layer(layer, snapshot);
@@ -129,6 +150,17 @@ impl DiffTextView {
     /// Replaces the rows, indexed by the line of the buffer.
     pub fn set_rows(&self, rows: Vec<Row>) {
         self.imp().rows.replace(rows);
+        self.queue_draw();
+    }
+
+    /// Inserts the rows of lines inserted before the line `at`.
+    pub fn insert_rows(&self, at: usize, rows: Vec<Row>) {
+        let mut current = self.imp().rows.borrow_mut();
+        if current.len() < at {
+            current.resize(at, Row::Blank);
+        }
+        current.splice(at..at, rows);
+        drop(current);
         self.queue_draw();
     }
 

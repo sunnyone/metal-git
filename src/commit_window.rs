@@ -628,7 +628,7 @@ impl CommitWindow {
         let mut diff_opts = git2::DiffOptions::new();
         diff_opts.pathspec(filename);
         let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
+        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 
@@ -643,7 +643,7 @@ impl CommitWindow {
         let head_tree = head_tree_object.as_tree().unwrap();
 
         let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
+        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 
@@ -653,7 +653,7 @@ impl CommitWindow {
             Ok(s) => s,
             Err(err) => format!("This file is not browsable: {}", err),
         };
-        self.diff_viewer.show_files(&[FileDiff::all_added(&name, &text)]);
+        self.diff_viewer.show_files(vec![FileDiff::all_added(&name, &text)]);
     }
 
     fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {

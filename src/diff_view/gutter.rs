@@ -71,9 +71,7 @@ mod imp {
             view.for_each_visible_row(|row, y, height| {
                 let (_, top) = view.buffer_to_window_coords(gtk::TextWindowType::Left, 0, y);
                 let area = graphene::Rect::new(0.0, top as f32, width, height as f32);
-                if let Some(background) = row.background() {
-                    snapshot.append_color(&background, &area);
-                }
+                row.draw_background(snapshot, &area);
                 self.draw_numbers(snapshot, row, &area, &color);
             });
         }

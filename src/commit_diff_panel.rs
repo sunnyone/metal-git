@@ -1,4 +1,4 @@
-use git2::{DiffOptions, Error, Oid};
+use git2::{Error, Oid};
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -67,47 +67,40 @@ impl CommitDiffPanel {
         }
 
         self.current_list_result.replace(Some(Rc::new(result)));
-        self.show_all_files_diff()?;
+        self.show_diff()?;
         self.diff_list_box.unselect_all();
 
         Ok(())
     }
 
+    /// Choosing a file in the list scrolls the diff to it, rather than showing
+    /// only that file, so that the whole commit stays in view.
     fn setup_list_box(self: &Rc<Self>) {
         let w = Rc::downgrade(self);
         self.diff_list_box.connect_selected_rows_changed(move |list_box| {
-            let Some(panel) = w.upgrade() else {
-                return;
-            };
-
-            let Some(row) = list_box.selected_row() else {
-                return;
-            };
-
-            let index = row.index();
-            if index >= 0 {
-                panel
-                    .file_selected(index as u32)
-                    .expect("Failed to select a file");
+            if let (Some(panel), Some(row)) = (w.upgrade(), list_box.selected_row()) {
+                panel.file_chosen(row.index());
+            }
+        });
+        // Clicking the row that is selected already scrolls to it again
+        let w = Rc::downgrade(self);
+        self.diff_list_box.connect_row_activated(move |_, row| {
+            if let Some(panel) = w.upgrade() {
+                panel.file_chosen(row.index());
             }
         });
     }
 
-    fn file_selected(&self, file_index: u32) -> Result<(), Error> {
-        let path = self
-            .current_list_result
-            .borrow()
-            .as_ref()
-            .and_then(|r| r.files[file_index as usize].new_file_path.clone());
-        self.show_diff(path)
+    fn file_chosen(&self, row_index: i32) {
+        // The list and the diff come from the same diff of the trees, so they
+        // have the files in the same order
+        if let Ok(file_index) = usize::try_from(row_index) {
+            self.diff_viewer.scroll_to_file(file_index);
+        }
     }
 
-    fn show_all_files_diff(&self) -> Result<(), Error> {
-        self.show_diff(None)
-    }
-
-    /// Shows the diff of the commit, limited to one file when a path is given.
-    fn show_diff(&self, path: Option<String>) -> Result<(), Error> {
+    /// Shows the diff of every file of the commit.
+    fn show_diff(&self) -> Result<(), Error> {
         let Some(list_result) = self.current_list_result.borrow().clone() else {
             return Ok(());
         };
@@ -115,14 +108,8 @@ impl CommitDiffPanel {
         let repo = self.repository_manager.open()?;
         let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
         let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
-
-        let mut opts = DiffOptions::new();
-        if let Some(path) = &path {
-            opts.pathspec(path);
-        }
-        let diff =
-            repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), Some(&mut opts))?;
-        self.diff_viewer.show_files(&diff_model::files_from_diff(&diff)?);
+        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
+        self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
         Ok(())
     }
 }

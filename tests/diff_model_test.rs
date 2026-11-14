@@ -193,3 +193,79 @@ pub fn side_by_side_keeps_every_line_once() {
 		assert_eq!((removed, added), (olds, news));
 	}
 }
+
+fn file_of_lines(name: &str, count: usize) -> FileDiff {
+	FileDiff::all_added(name, &"x\n".repeat(count))
+}
+
+#[test]
+pub fn files_from_a_diff_mark_their_changed_words_only_when_emphasized() {
+	let patch = "diff --git a/a.rs b/a.rs\n\
+		--- a/a.rs\n\
+		+++ b/a.rs\n\
+		@@ -1 +1 @@\n\
+		-let total = 1;\n\
+		+let total = 2;\n";
+	let diff = git2::Diff::from_buffer(patch.as_bytes()).unwrap();
+	let mut files = diff_model::files_from_diff(&diff).unwrap();
+	let file = &mut files[0];
+
+	assert!(!file.emphasized);
+	assert!(file.hunks[0].lines.iter().all(|l| l.emphasis.is_empty()));
+	assert!(file.hunks[0].pairs.is_empty());
+
+	file.emphasize();
+	assert!(file.emphasized);
+	let lines = &file.hunks[0].lines;
+	assert_eq!(vec!["2"], emphasized(&lines[1].content, &lines[1]));
+	assert_eq!(vec![(0, 1)], file.hunks[0].pairs);
+}
+
+#[test]
+pub fn line_count_adds_up_the_lines_of_every_hunk() {
+	let file = diff_buffers("a\nb\nc\nd\ne\nf\ng\nh\n", "A\nb\nc\nd\ne\nf\ng\nH\n", 0);
+
+	assert_eq!(2, file.hunks.len());
+	assert_eq!(4, file.line_count());
+}
+
+#[test]
+pub fn initially_open_closes_files_over_the_line_limit() {
+	let files = vec![
+		file_of_lines("small.rs", 10),
+		file_of_lines("large.rs", diff_model::MAX_OPEN_FILE_LINES + 1),
+		file_of_lines("limit.rs", diff_model::MAX_OPEN_FILE_LINES),
+	];
+
+	assert_eq!(vec![true, false, true], diff_model::initially_open(&files));
+}
+
+#[test]
+pub fn initially_open_closes_files_once_the_total_would_pass_the_limit() {
+	// Files that fill the total but for 5 lines
+	let size = diff_model::MAX_OPEN_FILE_LINES;
+	let mut sizes = vec![size; diff_model::MAX_OPEN_TOTAL_LINES / size];
+	let filled: usize = sizes.iter().sum();
+	if diff_model::MAX_OPEN_TOTAL_LINES - filled < 5 {
+		*sizes.last_mut().unwrap() -= 5;
+	}
+	let left = diff_model::MAX_OPEN_TOTAL_LINES - sizes.iter().sum::<usize>();
+	let fitting = sizes.len();
+
+	let mut files: Vec<FileDiff> = sizes.iter().enumerate().map(|(i, &n)| file_of_lines(&format!("{}.rs", i), n)).collect();
+	files.push(file_of_lines("over.rs", left + 1));
+	files.push(file_of_lines("small.rs", left));
+
+	let open = diff_model::initially_open(&files);
+	assert!(open[..fitting].iter().all(|&o| o));
+	assert!(!open[fitting]);
+	// A later file that still fits in what is left opens
+	assert!(open[fitting + 1]);
+}
+
+#[test]
+pub fn initially_open_always_opens_a_lone_file() {
+	let files = vec![file_of_lines("huge.rs", diff_model::MAX_OPEN_TOTAL_LINES * 2)];
+
+	assert_eq!(vec![true], diff_model::initially_open(&files));
+}
