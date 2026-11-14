@@ -151,6 +151,8 @@ pub struct FileDiff {
     /// The blob of the old version, which holds the unchanged lines that the
     /// hunks leave out
     pub old_id: Option<git2::Oid>,
+    /// The blob of the new version, when git knows it
+    pub new_id: Option<git2::Oid>,
     /// The lines of the old version, once read to reveal unchanged lines. See
     /// `FileDiff::reveal`.
     pub old_content: Option<Vec<String>>,
@@ -191,6 +193,7 @@ impl FileDiff {
                 pairs: Vec::new(),
             }],
             old_id: None,
+            new_id: None,
             old_content: None,
             emphasized: true,
         }
@@ -203,6 +206,35 @@ impl FileDiff {
             (Some(old), None) => old.to_string(),
             (None, None) => String::new(),
         }
+    }
+
+    /// A key of the change the file has: its path and its changed lines, or
+    /// for a binary file its versions. It leaves out the unchanged lines and
+    /// where the changes are, so that it stays the same when the change is
+    /// moved by an amend or a rebase, or when more unchanged lines are shown.
+    pub fn change_key(&self) -> String {
+        let mut bytes = Vec::new();
+        bytes.extend(self.display_path().as_bytes());
+        bytes.push(0);
+        if self.binary {
+            for id in [self.old_id, self.new_id] {
+                bytes.extend(id.map(|id| id.to_string()).unwrap_or_default().as_bytes());
+                bytes.push(0);
+            }
+        }
+        for line in self.hunks.iter().flat_map(|h| &h.lines) {
+            let sign = match line.kind {
+                LineKind::Added => b'+',
+                LineKind::Removed => b'-',
+                LineKind::Context => continue,
+            };
+            bytes.push(sign);
+            bytes.extend(line.content.as_bytes());
+            bytes.push(b'\n');
+        }
+        git2::Oid::hash_object(git2::ObjectType::Blob, &bytes)
+            .map(|oid| oid.to_string())
+            .unwrap_or_default()
     }
 
     /// The number of lines in all the hunks.

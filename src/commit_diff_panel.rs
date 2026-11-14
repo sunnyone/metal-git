@@ -43,6 +43,14 @@ impl CommitDiffPanel {
         });
 
         commit_diff_panel.setup_list_box();
+        let w = Rc::downgrade(&commit_diff_panel);
+        commit_diff_panel
+            .diff_viewer
+            .connect_viewed_changed(move |viewed| {
+                if let Some(panel) = w.upgrade() {
+                    panel.mark_viewed(viewed);
+                }
+            });
         commit_diff_panel
     }
 
@@ -69,14 +77,12 @@ impl CommitDiffPanel {
 
     /// Choosing a file in the list scrolls the diff to it, rather than showing
     /// only that file, so that the whole commit stays in view.
+    ///
+    /// A file is chosen by clicking its row or pressing Enter on it, which
+    /// also scrolls to the row that is selected already. A change of the
+    /// selection alone does not, as the list selects its first row when it
+    /// gets the focus, which would open that file even when it is viewed.
     fn setup_list_box(self: &Rc<Self>) {
-        let w = Rc::downgrade(self);
-        self.diff_list_box.connect_selected_rows_changed(move |list_box| {
-            if let (Some(panel), Some(row)) = (w.upgrade(), list_box.selected_row()) {
-                panel.file_chosen(row.index());
-            }
-        });
-        // Clicking the row that is selected already scrolls to it again
         let w = Rc::downgrade(self);
         self.diff_list_box.connect_row_activated(move |_, row| {
             if let Some(panel) = w.upgrade() {
@@ -90,6 +96,20 @@ impl CommitDiffPanel {
         // have the files in the same order
         if let Ok(file_index) = usize::try_from(row_index) {
             self.diff_viewer.scroll_to_file(file_index);
+        }
+    }
+
+    /// Shows a check on the rows of the files that are viewed.
+    fn mark_viewed(&self, viewed: &[bool]) {
+        for (index, &viewed) in viewed.iter().enumerate() {
+            let check = self
+                .diff_list_box
+                .row_at_index(index as i32)
+                .and_then(|row| row.child())
+                .and_then(|row| row.last_child());
+            if let Some(check) = check {
+                check.set_visible(viewed);
+            }
         }
     }
 
@@ -109,7 +129,7 @@ impl CommitDiffPanel {
 }
 
 /// A row of the list: the badge of the status of a file, as on its head line
-/// in the diff, then its path.
+/// in the diff, then its path, and last a check shown once it is viewed.
 fn file_row(entry: &ListCommitDiffFileEntry) -> gtk::Box {
     let badge = gtk::Label::builder()
         .use_markup(true)
@@ -118,6 +138,13 @@ fn file_row(entry: &ListCommitDiffFileEntry) -> gtk::Box {
     let path = gtk::Label::builder()
         .label(entry.format_file_move())
         .xalign(0.0)
+        .hexpand(true)
+        .build();
+    let check = gtk::Label::builder()
+        .label("✓")
+        .tooltip_text("Viewed")
+        .css_classes(["dim-label"])
+        .visible(false)
         .build();
     let row = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -125,6 +152,7 @@ fn file_row(entry: &ListCommitDiffFileEntry) -> gtk::Box {
         .build();
     row.append(&badge);
     row.append(&path);
+    row.append(&check);
     row
 }
 

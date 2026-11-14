@@ -13,7 +13,7 @@ use std::rc::Rc;
 use crate::app_settings::{self, DiffLayout};
 use crate::diff::{self, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
 use split::SplitView;
-use text::RevealFileGap;
+use text::{RevealFileGap, ToggleViewed};
 use unified::UnifiedView;
 
 const LAYOUTS: [DiffLayout; 2] = [DiffLayout::Unified, DiffLayout::Split];
@@ -54,6 +54,7 @@ pub fn status_badge_markup(status: FileStatus) -> String {
 struct Content {
     files: Vec<FileDiff>,
     open: Vec<bool>,
+    viewed: Vec<bool>,
 }
 
 type SharedContent = Rc<RefCell<Content>>;
@@ -70,7 +71,11 @@ pub struct DiffViewer {
     /// Reads the old versions of files, which hold the unchanged lines that
     /// the diff leaves out
     read_old_content: OldContentReader,
+    viewed_changed: RefCell<Option<ViewedChanged>>,
 }
+
+/// Called with which of the files shown are viewed, whenever that changes.
+pub type ViewedChanged = Box<dyn Fn(&[bool])>;
 
 impl DiffViewer {
     pub fn new(read_old_content: OldContentReader) -> Rc<DiffViewer> {
@@ -124,6 +129,7 @@ impl DiffViewer {
             split,
             content,
             read_old_content,
+            viewed_changed: RefCell::new(None),
         });
 
         let w = Rc::downgrade(&viewer);
@@ -139,6 +145,15 @@ impl DiffViewer {
         viewer.split.connect_reveal(reveal);
 
         let w = Rc::downgrade(&viewer);
+        let toggle_viewed: ToggleViewed = Rc::new(move |file_index| {
+            if let Some(viewer) = w.upgrade() {
+                viewer.toggle_viewed(file_index);
+            }
+        });
+        viewer.unified.connect_toggle_viewed(toggle_viewed.clone());
+        viewer.split.connect_toggle_viewed(toggle_viewed);
+
+        let w = Rc::downgrade(&viewer);
         viewer.layout_dropdown.connect_selected_notify(move |_| {
             if let Some(viewer) = w.upgrade() {
                 viewer.layout_changed();
@@ -152,13 +167,68 @@ impl DiffViewer {
         self.root.clone().upcast()
     }
 
-    /// Shows files, those of a large diff closed at first. See
-    /// `diff::initially_open`.
+    /// Sets what is told which of the files shown are viewed, whenever that
+    /// changes.
+    pub fn connect_viewed_changed(&self, viewed_changed: impl Fn(&[bool]) + 'static) {
+        self.viewed_changed.replace(Some(Box::new(viewed_changed)));
+    }
+
+    /// Shows files, those of a large diff and those viewed before closed at
+    /// first. See `diff::initially_open`.
     pub fn show_files(&self, files: Vec<FileDiff>) {
-        self.summary.set_text(&summary_text(&files));
-        let open = diff::initially_open(&files);
-        self.content.replace(Content { files, open });
+        let viewed_keys = app_settings::load_viewed_changes(&app_settings::viewed_changes_path());
+        let viewed: Vec<bool> = files
+            .iter()
+            .map(|file| viewed_keys.contains(&file.change_key()))
+            .collect();
+        let open = diff::initially_open(&files)
+            .into_iter()
+            .zip(&viewed)
+            .map(|(open, &viewed)| open && !viewed)
+            .collect();
+        self.content.replace(Content {
+            files,
+            open,
+            viewed,
+        });
+        self.update_summary();
         self.render();
+        self.notify_viewed();
+    }
+
+    /// Marks a file as viewed and closes it, or unmarks it and opens it.
+    fn toggle_viewed(&self, file_index: usize) {
+        let (key, viewed) = {
+            let mut content = self.content.borrow_mut();
+            let Some(&viewed) = content.viewed.get(file_index) else {
+                return;
+            };
+            content.viewed[file_index] = !viewed;
+            (content.files[file_index].change_key(), !viewed)
+        };
+        if let Err(err) =
+            app_settings::save_change_viewed(&app_settings::viewed_changes_path(), &key, viewed)
+        {
+            eprintln!("Failed to save the viewed files: {}", err);
+        }
+        match self.layout() {
+            DiffLayout::Unified => self.unified.set_file_viewed(file_index, viewed),
+            DiffLayout::Split => self.split.set_file_viewed(file_index, viewed),
+        }
+        self.update_summary();
+        self.notify_viewed();
+    }
+
+    fn update_summary(&self) {
+        let content = self.content.borrow();
+        self.summary
+            .set_text(&summary_text(&content.files, &content.viewed));
+    }
+
+    fn notify_viewed(&self) {
+        if let Some(viewed_changed) = self.viewed_changed.borrow().as_ref() {
+            viewed_changed(&self.content.borrow().viewed);
+        }
     }
 
     /// Opens the file at an index of the files shown, and scrolls to it.
@@ -220,9 +290,18 @@ impl DiffViewer {
     }
 }
 
-fn summary_text(files: &[FileDiff]) -> String {
+fn summary_text(files: &[FileDiff], viewed: &[bool]) -> String {
     let added: usize = files.iter().map(|f| f.count_lines(LineKind::Added)).sum();
     let removed: usize = files.iter().map(|f| f.count_lines(LineKind::Removed)).sum();
     let noun = if files.len() == 1 { "file" } else { "files" };
-    format!("{} {}  +{} −{}", files.len(), noun, added, removed)
+    let viewed_count = viewed.iter().filter(|&&v| v).count();
+    format!(
+        "{} {}  +{} −{}    {}/{} viewed",
+        files.len(),
+        noun,
+        added,
+        removed,
+        viewed_count,
+        files.len()
+    )
 }

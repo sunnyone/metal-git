@@ -1,4 +1,5 @@
 use crate::railway::HistoryScope;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -60,4 +61,43 @@ pub fn save_diff_layout(path: &Path, layout: DiffLayout) -> io::Result<()> {
         DiffLayout::Split => SPLIT_VALUE,
     };
     fs::write(path, value)
+}
+
+/// Where the changes marked as viewed are kept, by `FileDiff::change_key`.
+pub fn viewed_changes_path() -> PathBuf {
+    gtk::glib::user_config_dir()
+        .join("metal-git")
+        .join("viewed-changes")
+}
+
+/// A missing or unreadable file means nothing has been viewed yet.
+pub fn load_viewed_changes(path: &Path) -> BTreeSet<String> {
+    fs::read_to_string(path)
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Marks a change as viewed or not. The file is read again first, so that the
+/// marks another window made in the meantime are kept.
+pub fn save_change_viewed(path: &Path, key: &str, viewed: bool) -> io::Result<()> {
+    let mut keys = load_viewed_changes(path);
+    let changed = if viewed {
+        keys.insert(key.to_string())
+    } else {
+        keys.remove(key)
+    };
+    if !changed {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let text: String = keys.iter().map(|key| format!("{}\n", key)).collect();
+    fs::write(path, text)
 }

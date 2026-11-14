@@ -452,3 +452,31 @@ pub fn reveal_needs_the_old_version() {
 	assert!(!file.reveal(1, diff::Reveal::All));
 	assert_eq!(2, file.hunks.len());
 }
+
+#[test]
+pub fn the_change_key_leaves_out_unchanged_lines_and_where_the_change_is() {
+	let base = diff_buffers("a\nb\nc\n", "a\nB\nc\n", 3);
+	let less_context = diff_buffers("a\nb\nc\n", "a\nB\nc\n", 0);
+	let moved_down = diff_buffers("x\ny\na\nb\nc\n", "x\ny\na\nB\nc\n", 3);
+
+	assert_eq!(base.change_key(), less_context.change_key());
+	assert_eq!(base.change_key(), moved_down.change_key());
+}
+
+#[test]
+pub fn the_change_key_follows_the_changed_lines() {
+	let base = diff_buffers("a\nb\nc\n", "a\nB\nc\n", 3);
+	let other = diff_buffers("a\nb\nc\n", "a\nBB\nc\n", 3);
+
+	assert_ne!(base.change_key(), other.change_key());
+}
+
+#[test]
+pub fn revealing_unchanged_lines_keeps_the_change_key() {
+	let mut file = file_with_two_hunks();
+	let key = file.change_key();
+
+	file.reveal(1, diff::Reveal::All);
+
+	assert_eq!(key, file.change_key());
+}

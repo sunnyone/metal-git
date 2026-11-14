@@ -255,18 +255,33 @@ pub struct FileSlot {
     /// At the start of the head line. It has right gravity, so that it stays on
     /// its line when the lines of the file before are inserted.
     pub head: gtk::TextMark,
+    /// Before the check of the "Viewed" box on the head line
+    pub viewed_check: gtk::TextMark,
     /// The tag that the lines of the file carry
     pub body: String,
     /// The lines of a closed file are inserted only when it is opened
     pub loaded: bool,
 }
 
-/// Inserts the head line of a file, which opens and closes the file when clicked.
+/// The check of the "Viewed" box on the head line of a file.
+fn viewed_check(viewed: bool) -> &'static str {
+    if viewed {
+        "✓"
+    } else {
+        " "
+    }
+}
+
+/// Inserts the head line of a file, which opens and closes the file when
+/// clicked, with a "Viewed" box at its end that runs `toggle_viewed`.
 pub fn insert_file_head(
     folds: &Folds,
+    links: &Links,
     iter: &mut gtk::TextIter,
     file: &FileDiff,
     open: bool,
+    viewed: bool,
+    toggle_viewed: impl Fn() + 'static,
 ) -> FileSlot {
     let buffer = iter.buffer();
     let start = iter.offset();
@@ -283,12 +298,45 @@ pub fn insert_file_head(
         .collect();
     let body = folds.insert_head_segments(iter, &segment_refs, &[FILE_HEADER], open);
     let head = buffer.create_mark(None, &buffer.iter_at_offset(start), false);
+
+    // At the end of the head line, before its line break
+    iter.backward_char();
+    insert(&buffer, iter, "    ", &[FILE_HEADER]);
+    let check_offset = iter.offset() + 1;
+    links.insert(
+        iter,
+        &format!("[{}] Viewed", viewed_check(viewed)),
+        &[FILE_HEADER, NOTE_COUNTS],
+        "Mark the file as viewed, which closes it",
+        toggle_viewed,
+    );
+    let viewed_check = buffer.create_mark(None, &buffer.iter_at_offset(check_offset), true);
+    iter.forward_line();
+
     FileSlot {
         fold,
         head,
+        viewed_check,
         body,
         loaded: false,
     }
+}
+
+/// Shows on the head line of a file whether it is viewed.
+pub fn set_viewed_check(buffer: &gtk::TextBuffer, slot: &FileSlot, viewed: bool) {
+    let mut start = buffer.iter_at_mark(&slot.viewed_check);
+    let mut end = start;
+    end.forward_char();
+    let tags = start.tags();
+    buffer.delete(&mut start, &mut end);
+    let tag_refs: Vec<&gtk::TextTag> = tags.iter().collect();
+    buffer.insert_with_tags(&mut start, viewed_check(viewed), &tag_refs);
+}
+
+/// Deletes the marks of a file shown before.
+pub fn forget_file_slot(buffer: &gtk::TextBuffer, slot: &FileSlot) {
+    buffer.delete_mark(&slot.head);
+    buffer.delete_mark(&slot.viewed_check);
 }
 
 /// Scrolls the head line of a file to the top. Lines that are not laid out yet
@@ -308,7 +356,7 @@ pub fn scroll_to_file_head(view: &gtk::TextView, slot: &FileSlot) {
 /// Deletes the marks of the files shown before. Call it before showing others.
 pub fn forget_file_slots(buffer: &gtk::TextBuffer, slots: &mut Vec<FileSlot>) {
     for slot in slots.drain(..) {
-        buffer.delete_mark(&slot.head);
+        forget_file_slot(buffer, &slot);
     }
 }
 
@@ -354,6 +402,19 @@ pub type RevealGap = Rc<dyn Fn(usize, Reveal)>;
 
 /// Called with the index of a file as well as what `RevealGap` gets.
 pub type RevealFileGap = Rc<dyn Fn(usize, usize, Reveal)>;
+
+/// Called with the index of a file whose "Viewed" box was clicked.
+pub type ToggleViewed = Rc<dyn Fn(usize)>;
+
+/// What the "Viewed" box of a file runs.
+pub fn toggle_viewed_of(handler: &Option<ToggleViewed>, file_index: usize) -> impl Fn() + 'static {
+    let handler = handler.clone();
+    move || {
+        if let Some(handler) = &handler {
+            handler(file_index);
+        }
+    }
+}
 
 /// The `RevealGap` of one file.
 pub fn reveal_gap_of(handler: &RevealFileGap, file_index: usize) -> RevealGap {
@@ -541,6 +602,14 @@ impl Folds {
         let Some(iter) = self.view.iter_at_location(bx, by) else {
             return;
         };
+        // A link on a head line does something else than opening and closing
+        if iter
+            .tags()
+            .iter()
+            .any(|tag| tag.name().as_deref() == Some(LINK))
+        {
+            return;
+        }
 
         let found = self
             .folds

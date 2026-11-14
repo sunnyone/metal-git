@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds, Links, RevealFileGap, RevealGap};
+use super::text::{self, FileSlot, Folds, Links, RevealFileGap, RevealGap, ToggleViewed};
 use super::SharedContent;
 use crate::diff::{DiffLine, FileDiff, Gap};
 
@@ -123,10 +123,19 @@ impl Side {
         iter: &mut gtk::TextIter,
         rows: &mut RowRecorder,
         file: &FileDiff,
-        open: bool,
+        (open, viewed): (bool, bool),
+        toggle_viewed: impl Fn() + 'static,
     ) -> FileSlot {
         rows.set(iter, Row::FileHeader);
-        text::insert_file_head(&self.folds, iter, file, open)
+        text::insert_file_head(
+            &self.folds,
+            &self.links,
+            iter,
+            file,
+            open,
+            viewed,
+            toggle_viewed,
+        )
     }
 
     fn finish(&self, rows: RowRecorder) {
@@ -199,6 +208,7 @@ pub struct SplitView {
     /// both.
     slots: RefCell<Vec<(FileSlot, FileSlot)>>,
     reveal: RefCell<Option<RevealFileGap>>,
+    toggle_viewed: RefCell<Option<ToggleViewed>>,
 }
 
 impl SplitView {
@@ -225,6 +235,7 @@ impl SplitView {
             content,
             slots: RefCell::new(Vec::new()),
             reveal: RefCell::new(None),
+            toggle_viewed: RefCell::new(None),
         });
 
         let w = Rc::downgrade(&split);
@@ -254,6 +265,32 @@ impl SplitView {
         self.reveal.replace(Some(reveal));
     }
 
+    /// Sets what runs when the "Viewed" box of a file is clicked. The caller
+    /// shows the change with `set_file_viewed`.
+    pub fn connect_toggle_viewed(&self, toggle_viewed: ToggleViewed) {
+        self.toggle_viewed.replace(Some(toggle_viewed));
+    }
+
+    /// Shows whether a file is viewed on both sides, and closes it when it is,
+    /// or opens it.
+    pub fn set_file_viewed(&self, file_index: usize, viewed: bool) {
+        let Some(fold) = self
+            .slots
+            .borrow()
+            .get(file_index)
+            .map(|(old_slot, new_slot)| {
+                text::set_viewed_check(&self.old.view.buffer(), old_slot, viewed);
+                text::set_viewed_check(&self.new.view.buffer(), new_slot, viewed);
+                old_slot.fold
+            })
+        else {
+            return;
+        };
+        self.old.folds.set_open(fold, !viewed);
+        self.new.folds.set_open(fold, !viewed);
+        self.file_toggled(file_index, !viewed);
+    }
+
     /// Draws the lines of a file again on both sides, after they changed,
     /// keeping the lines above in place.
     pub fn reload_file(&self, file_index: usize) {
@@ -280,8 +317,8 @@ impl SplitView {
     pub fn show(&self) {
         let mut slots = self.slots.borrow_mut();
         for (old_slot, new_slot) in slots.drain(..) {
-            self.old.view.buffer().delete_mark(&old_slot.head);
-            self.new.view.buffer().delete_mark(&new_slot.head);
+            text::forget_file_slot(&self.old.view.buffer(), &old_slot);
+            text::forget_file_slot(&self.new.view.buffer(), &new_slot);
         }
         drop(slots);
         self.old.clear();
@@ -300,13 +337,23 @@ impl SplitView {
 
         let mut content = self.content.borrow_mut();
         let content = &mut *content;
+        let toggle_viewed = self.toggle_viewed.borrow().clone();
         for (file_index, (file, &open)) in content.files.iter_mut().zip(&content.open).enumerate() {
-            let mut old_slot = self
-                .old
-                .insert_file_head(&mut old_iter, &mut old_rows, file, open);
-            let mut new_slot = self
-                .new
-                .insert_file_head(&mut new_iter, &mut new_rows, file, open);
+            let state = (open, content.viewed[file_index]);
+            let mut old_slot = self.old.insert_file_head(
+                &mut old_iter,
+                &mut old_rows,
+                file,
+                state,
+                text::toggle_viewed_of(&toggle_viewed, file_index),
+            );
+            let mut new_slot = self.new.insert_file_head(
+                &mut new_iter,
+                &mut new_rows,
+                file,
+                state,
+                text::toggle_viewed_of(&toggle_viewed, file_index),
+            );
             if open {
                 file.emphasize();
                 self.insert_body(

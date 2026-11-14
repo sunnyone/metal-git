@@ -18,7 +18,8 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
                     status: status_of(delta.status()),
                     binary: delta.flags().is_binary(),
                     hunks: Vec::new(),
-                    old_id: None,
+                    old_id: Some(delta.old_file().id()).filter(|id| !id.is_zero()),
+                    new_id: Some(delta.new_file().id()).filter(|id| !id.is_zero()),
                     old_content: None,
                     emphasized: true,
                 }),
@@ -79,6 +80,7 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
         binary: delta.flags().is_binary(),
         hunks,
         old_id: Some(delta.old_file().id()).filter(|id| !id.is_zero()),
+        new_id: Some(delta.new_file().id()).filter(|id| !id.is_zero()),
         old_content: None,
         emphasized: false,
     })

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::diff_text_view::{DiffTextView, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds, Links, RevealFileGap};
+use super::text::{self, FileSlot, Folds, Links, RevealFileGap, ToggleViewed};
 use super::SharedContent;
 use crate::diff::FileDiff;
 
@@ -20,6 +20,7 @@ pub struct UnifiedView {
     /// Indexed like the files of `content`
     slots: RefCell<Vec<FileSlot>>,
     reveal: RefCell<Option<RevealFileGap>>,
+    toggle_viewed: RefCell<Option<ToggleViewed>>,
 }
 
 impl UnifiedView {
@@ -38,6 +39,7 @@ impl UnifiedView {
             content,
             slots: RefCell::new(Vec::new()),
             reveal: RefCell::new(None),
+            toggle_viewed: RefCell::new(None),
         });
 
         let w = Rc::downgrade(&unified);
@@ -59,6 +61,24 @@ impl UnifiedView {
         self.reveal.replace(Some(reveal));
     }
 
+    /// Sets what runs when the "Viewed" box of a file is clicked. The caller
+    /// shows the change with `set_file_viewed`.
+    pub fn connect_toggle_viewed(&self, toggle_viewed: ToggleViewed) {
+        self.toggle_viewed.replace(Some(toggle_viewed));
+    }
+
+    /// Shows whether a file is viewed, and closes it when it is, or opens it.
+    pub fn set_file_viewed(&self, file_index: usize, viewed: bool) {
+        let Some(fold) = self.slots.borrow().get(file_index).map(|slot| {
+            text::set_viewed_check(&self.view.buffer(), slot, viewed);
+            slot.fold
+        }) else {
+            return;
+        };
+        self.folds.set_open(fold, !viewed);
+        self.file_toggled(file_index, !viewed);
+    }
+
     pub fn show(&self) {
         let buffer = self.view.buffer();
         self.folds.clear();
@@ -71,9 +91,18 @@ impl UnifiedView {
 
         let mut content = self.content.borrow_mut();
         let content = &mut *content;
+        let toggle_viewed = self.toggle_viewed.borrow().clone();
         for (file_index, (file, &open)) in content.files.iter_mut().zip(&content.open).enumerate() {
             rows.set(&iter, Row::FileHeader);
-            let mut slot = text::insert_file_head(&self.folds, &mut iter, file, open);
+            let mut slot = text::insert_file_head(
+                &self.folds,
+                &self.links,
+                &mut iter,
+                file,
+                open,
+                content.viewed[file_index],
+                text::toggle_viewed_of(&toggle_viewed, file_index),
+            );
             if open {
                 file.emphasize();
                 self.insert_body(&mut iter, &mut rows, file_index, file, &slot.body);

@@ -2,7 +2,8 @@ extern crate metal_git;
 extern crate tempdir;
 
 use metal_git::app_settings::{
-    load_diff_layout, load_history_scope, save_diff_layout, save_history_scope, DiffLayout,
+    load_diff_layout, load_history_scope, load_viewed_changes, save_change_viewed,
+    save_diff_layout, save_history_scope, DiffLayout,
 };
 use metal_git::railway::HistoryScope;
 use std::fs;
@@ -53,4 +54,30 @@ pub fn saved_diff_layout_is_loaded_back() {
 
     save_diff_layout(&path, DiffLayout::Unified).unwrap();
     assert_eq!(DiffLayout::Unified, load_diff_layout(&path));
+}
+
+#[test]
+pub fn viewed_changes_are_saved_and_unmarked() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("viewed-changes");
+
+    assert!(load_viewed_changes(&path).is_empty());
+    save_change_viewed(&path, "k1", true).unwrap();
+    save_change_viewed(&path, "k2", true).unwrap();
+    save_change_viewed(&path, "k2", false).unwrap();
+
+    let keys = load_viewed_changes(&path);
+    assert!(keys.contains("k1"));
+    assert!(!keys.contains("k2"));
+}
+
+#[test]
+pub fn saving_a_viewed_change_keeps_the_marks_saved_elsewhere() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("viewed-changes");
+    fs::write(&path, "from-another-window\n").unwrap();
+
+    save_change_viewed(&path, "k1", true).unwrap();
+
+    assert_eq!(2, load_viewed_changes(&path).len());
 }
