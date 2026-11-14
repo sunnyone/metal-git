@@ -1,4 +1,4 @@
-use git2::{Delta, Diff, Error, Patch};
+use git2::{Delta, Diff, DiffFindOptions, Error, Patch, Repository, Tree};
 use similar::{Algorithm, DiffTag};
 use std::ops::Range;
 
@@ -236,6 +236,21 @@ pub fn initially_open(files: &[FileDiff]) -> Vec<bool> {
         .collect()
 }
 
+/// The diff between two trees, with files that were renamed found as renamed
+/// rather than as one deleted and one added. The file list and the diff of a
+/// commit both come from it, so that they have the same files in the same order.
+pub fn diff_trees<'repo>(
+    repo: &'repo Repository,
+    old: Option<&Tree>,
+    new: Option<&Tree>,
+) -> Result<Diff<'repo>, Error> {
+    let mut diff = repo.diff_tree_to_tree(old, new, None)?;
+    let mut opts = DiffFindOptions::new();
+    opts.renames(true);
+    diff.find_similar(Some(&mut opts))?;
+    Ok(diff)
+}
+
 /// The files of a diff, with their changed words not marked yet. See
 /// `FileDiff::emphasize`.
 pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
@@ -248,7 +263,7 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
                     old_path: path_of(delta.old_file()),
                     new_path: path_of(delta.new_file()),
                     status: status_of(delta.status()),
-                    binary: true,
+                    binary: delta.flags().is_binary(),
                     hunks: Vec::new(),
                     emphasized: true,
                 }),

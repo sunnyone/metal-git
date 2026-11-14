@@ -276,3 +276,37 @@ pub fn statuses_show_the_letters_of_git_status() {
 
 	assert_eq!(vec!["A", "D", "M", "R", "C", "?"], letters);
 }
+
+fn tree_of<'repo>(repo: &'repo git2::Repository, files: &[(&str, &str)]) -> git2::Tree<'repo> {
+	let mut builder = repo.treebuilder(None).unwrap();
+	for (name, content) in files {
+		let blob = repo.blob(content.as_bytes()).unwrap();
+		builder.insert(name, blob, 0o100644).unwrap();
+	}
+	repo.find_tree(builder.write().unwrap()).unwrap()
+}
+
+#[test]
+pub fn diff_trees_finds_renamed_files() {
+	let dir = tempdir::TempDir::new("diff-trees").unwrap();
+	let repo = git2::Repository::init(dir.path()).unwrap();
+	let body: String = (0..20).map(|i| format!("line {}\n", i)).collect();
+	let changed = body.replace("line 3\n", "line three\n");
+	let old = tree_of(&repo, &[("a.txt", &body), ("b.txt", &body), ("kept.txt", "kept\n")]);
+	let new = tree_of(&repo, &[("moved.txt", &body), ("c.txt", &changed), ("kept.txt", "kept\n")]);
+
+	let diff = diff_model::diff_trees(&repo, Some(&old), Some(&new)).unwrap();
+	let files = diff_model::files_from_diff(&diff).unwrap();
+
+	let summary: Vec<(FileStatus, String, usize)> =
+		files.iter().map(|f| (f.status, f.display_path(), f.line_count())).collect();
+	assert_eq!(
+		// In the order of the new paths
+		vec![
+			(FileStatus::Renamed, "b.txt → c.txt".to_string(), 8),
+			(FileStatus::Renamed, "a.txt → moved.txt".to_string(), 0),
+		],
+		summary
+	);
+	assert!(files.iter().all(|f| !f.binary));
+}

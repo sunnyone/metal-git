@@ -350,8 +350,7 @@ impl SplitView {
         let old_buffer = self.old.view.buffer();
         let new_buffer = self.new.view.buffer();
 
-        if file.binary {
-            let note = "Binary file\n";
+        if let Some(note) = text::body_note(file) {
             text::insert(
                 &old_buffer,
                 old_iter,

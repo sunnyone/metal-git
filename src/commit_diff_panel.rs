@@ -104,7 +104,7 @@ impl CommitDiffPanel {
         let repo = self.repository_manager.open()?;
         let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
         let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
-        let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&current_tree), None)?;
+        let diff = diff_model::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
         self.diff_viewer.show_files(diff_model::files_from_diff(&diff)?);
         Ok(())
     }
