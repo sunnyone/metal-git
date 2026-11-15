@@ -418,10 +418,14 @@ impl HistoryWindow {
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let check = gtk::Label::new(Some("\u{2713}"));
             let label = gtk::Label::builder().xalign(0.0).build();
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let content = gtk::Box::builder().orientation(gtk::Orientation::Horizontal).spacing(4).build();
+            content.append(&check);
+            content.append(&label);
             let expander = gtk::TreeExpander::new();
-            expander.set_child(Some(&label));
+            expander.set_child(Some(&content));
             list_item.set_child(Some(&expander));
         });
         factory.connect_bind(|_, list_item| {
@@ -430,7 +434,13 @@ impl HistoryWindow {
             let row = list_item.item().and_downcast::<gtk::TreeListRow>();
             expander.set_list_row(row.as_ref());
             let Some(node) = row.as_ref().and_then(branch_tree_node) else { return };
-            if let Some(label) = expander.child().and_downcast::<gtk::Label>() {
+            let Some(content) = expander.child().and_downcast::<gtk::Box>() else { return };
+            if let Some(check) = content.first_child().and_downcast::<gtk::Label>() {
+                // Every local branch keeps the space, so that the names line up
+                check.set_visible(node.kind == BranchTreeKind::LocalBranch);
+                check.set_opacity(if node.is_head { 1.0 } else { 0.0 });
+            }
+            if let Some(label) = content.last_child().and_downcast::<gtk::Label>() {
                 label.set_label(&node.label);
                 label.set_css_classes(if node.kind == BranchTreeKind::Header { &["branch-tree-header"] } else { &[] });
             }
