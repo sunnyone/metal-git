@@ -29,7 +29,7 @@ fn tag(test_repo: &TestRepo, name: &str) {
 }
 
 #[test]
-pub fn folders_come_first_and_names_are_sorted_naturally() {
+pub fn references_come_before_folders_and_names_are_sorted_naturally() {
     let test_repo = TestRepo::branches_with_distinct_files();
     let master = test_repo.tip_oid("master");
     for name in ["issue-10", "Issue-2", "topic/login", "topic/diff", "user/me/fix/x"] {
@@ -50,22 +50,22 @@ pub fn folders_come_first_and_names_are_sorted_naturally() {
             "All Branches",
             "Current Branch (master)",
             "Local",
+            "  feature",
+            "  Issue-2",
+            "  issue-10",
+            "  master",
             "  topic/",
             "    diff",
             "    login",
             // A folder with only one folder in it shares its row
             "  user/me/fix/",
             "    x",
-            "  feature",
-            "  Issue-2",
-            "  issue-10",
-            "  master",
             "Remote",
             // origin comes first among the remotes
             "  origin/",
+            "    main",
             "    feature/",
             "      login",
-            "    main",
             "  backup/",
             "    main",
             "  upstream/",
@@ -91,7 +91,7 @@ pub fn rows_carry_the_scope_they_show() {
     assert_eq!(HistoryScope::CurrentBranch, nodes[1].scope);
     let local = &nodes[2];
     assert_eq!((BranchTreeKind::Header, HistoryScope::Prefix("refs/heads/".to_owned())), (local.kind, local.scope.clone()));
-    let folder = &local.children[0];
+    let folder = local.children.iter().find(|node| node.kind == BranchTreeKind::Folder).unwrap();
     assert_eq!(HistoryScope::Prefix("refs/heads/user/me/fix/".to_owned()), folder.scope);
     assert_eq!(HistoryScope::Ref("refs/heads/user/me/fix/x".to_owned()), folder.children[0].scope);
     let master = local.children.iter().find(|node| node.label == "master").unwrap();
