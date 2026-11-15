@@ -80,6 +80,38 @@ pub fn references_come_before_folders_and_names_are_sorted_naturally() {
 }
 
 #[test]
+pub fn references_come_before_folders_inside_folders_too() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let master = test_repo.tip_oid("master");
+    for name in ["topic/c", "topic/ui/sidebar", "topic/a", "topic/api/v2/auth", "topic/ui/search", "topic/b"] {
+        test_repo.create_local_branch(name, master);
+    }
+
+    let nodes = collect_branch_tree(&test_repo.repository_manager().open().unwrap()).unwrap();
+
+    let labels = labels(&nodes);
+    let local = labels.iter().position(|label| label == "Local").unwrap();
+    assert_eq!(
+        vec![
+            "Local",
+            "  feature",
+            "  master",
+            "  topic/",
+            "    a",
+            "    b",
+            "    c",
+            // A folder with only one folder in it shares its row, and still comes after the references
+            "    api/v2/",
+            "      auth",
+            "    ui/",
+            "      search",
+            "      sidebar",
+        ],
+        labels[local..]
+    );
+}
+
+#[test]
 pub fn rows_carry_the_scope_they_show() {
     let test_repo = TestRepo::branches_with_distinct_files();
     test_repo.create_local_branch("user/me/fix/x", test_repo.tip_oid("master"));
