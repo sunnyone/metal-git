@@ -3,7 +3,7 @@ extern crate metal_git;
 extern crate tempdir;
 
 use git2::{Oid, Repository, Signature};
-use metal_git::diff::{DiffTarget, Differ, FileDiff, FileStatus, LineKind};
+use metal_git::diff::{DiffSettings, DiffTarget, Differ, FileDiff, FileStatus, LineKind};
 use metal_git::repository_manager::RepositoryManager;
 use std::fs;
 use std::path::Path;
@@ -53,7 +53,7 @@ impl Fixture {
 	}
 
 	fn files(&self, target: DiffTarget) -> Vec<FileDiff> {
-		self.differ.files(&target).unwrap()
+		self.differ.files(&target, DiffSettings::default()).unwrap()
 	}
 }
 
@@ -140,4 +140,20 @@ pub fn the_old_version_of_a_file_is_read_for_its_unchanged_lines() {
 		vec!["one".to_string(), "two".to_string(), "three".to_string()],
 		fixture.differ.old_content(&files[0]).unwrap()
 	);
+}
+
+#[test]
+pub fn hiding_whitespace_leaves_a_file_whose_whitespace_alone_changed_with_no_hunks() {
+	let fixture = Fixture::new();
+	fixture.commit(&[("a.txt", "x = 1\n")]);
+	fixture.write("a.txt", "x  =  1\n");
+	let hide = DiffSettings { ignore_whitespace: true };
+
+	let shown = fixture.files(DiffTarget::WorkTree("a.txt".to_string()));
+	let hidden = fixture.differ.files(&DiffTarget::WorkTree("a.txt".to_string()), hide).unwrap();
+
+	assert_eq!(1, shown[0].hunks.len());
+	assert!(!shown[0].whitespace_ignored);
+	assert_eq!(0, hidden[0].hunks.len());
+	assert!(hidden[0].whitespace_ignored);
 }

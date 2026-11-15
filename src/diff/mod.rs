@@ -13,7 +13,7 @@ pub use commit::{diff_trees, ListCommitDiffFileEntry, ListCommitDiffResult};
 pub use context::{Gap, Reveal};
 pub use differ::{DiffTarget, Differ};
 pub use emphasis::{changed_ranges, emphasize_changes};
-pub use from_git::{file_from_patch, files_from_diff, status_of};
+pub use from_git::{file_from_patch, files_from_diff, status_of, DiffSettings};
 pub use model::{
     initially_open, DiffHunk, DiffLine, FileDiff, FileStatus, LineKind, SideBySideRow,
     MAX_OPEN_FILE_LINES, MAX_OPEN_TOTAL_LINES,

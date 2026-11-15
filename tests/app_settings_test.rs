@@ -2,7 +2,8 @@ extern crate metal_git;
 extern crate tempdir;
 
 use metal_git::app_settings::{
-    load_diff_layout, load_history_scope, save_diff_layout, save_history_scope, DiffLayout,
+    load_diff_layout, load_hide_whitespace, load_history_scope, save_diff_layout,
+    save_hide_whitespace, save_history_scope, DiffLayout,
 };
 use metal_git::railway::HistoryScope;
 use std::fs;
@@ -53,4 +54,16 @@ pub fn saved_diff_layout_is_loaded_back() {
 
     save_diff_layout(&path, DiffLayout::Unified).unwrap();
     assert_eq!(DiffLayout::Unified, load_diff_layout(&path));
+}
+
+#[test]
+pub fn whitespace_is_shown_unless_saved_as_hidden() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("diff-whitespace");
+
+    assert!(!load_hide_whitespace(&path));
+    save_hide_whitespace(&path, true).unwrap();
+    assert!(load_hide_whitespace(&path));
+    save_hide_whitespace(&path, false).unwrap();
+    assert!(!load_hide_whitespace(&path));
 }
