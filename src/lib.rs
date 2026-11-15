@@ -5,6 +5,7 @@ use gtk::prelude::*;
 
 pub mod repository_manager;
 pub mod branch;
+pub mod branch_tree;
 
 #[macro_use]
 mod gtk_utils;

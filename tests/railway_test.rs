@@ -215,3 +215,66 @@ pub fn all_branches_scope_keeps_children_above_a_parent_with_the_same_time() {
     assert_eq!(9, graph.len());
     assert_eq!(root, graph.commit(8).unwrap().oid);
 }
+
+fn commit_on_master(test_repo: &TestRepo, message: &str) -> git2::Oid {
+    let repo = test_repo.repository_manager().open().unwrap();
+    let signature = git2::Signature::now("test", "test@example.com").unwrap();
+    let parent = repo.find_commit(test_repo.tip_oid("master")).unwrap();
+    let tree = parent.tree().unwrap();
+    repo.commit(Some("refs/heads/master"), &signature, &signature, message, &tree, &[&parent])
+        .unwrap()
+}
+
+#[test]
+pub fn ref_scope_starts_from_that_reference_and_hides_the_others() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let master = commit_on_master(&test_repo, "only on master");
+    let feature = test_repo.tip_oid("feature");
+
+    let graph = collect(&test_repo, railway::HistoryScope::Ref("refs/heads/feature".to_owned()));
+
+    assert_eq!(feature, graph.commit(0).unwrap().oid);
+    assert!(commit_at(&graph, master).is_none());
+}
+
+#[test]
+pub fn ref_scope_starts_from_the_commit_of_an_annotated_tag() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let feature = test_repo.tip_oid("feature");
+    let repo = test_repo.repository_manager().open().unwrap();
+    let signature = git2::Signature::now("test", "test@example.com").unwrap();
+    let target = repo.find_object(feature, None).unwrap();
+    repo.tag("v1", &target, &signature, "release", false).unwrap();
+
+    let graph = collect(&test_repo, railway::HistoryScope::Ref("refs/tags/v1".to_owned()));
+
+    assert_eq!(feature, graph.commit(0).unwrap().oid);
+}
+
+#[test]
+pub fn ref_scope_of_a_missing_reference_is_an_error() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+
+    let result = railway::collect_tree(
+        &test_repo.repository_manager(),
+        railway::HistoryScope::Ref("refs/heads/missing".to_owned()),
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+pub fn prefix_scope_includes_every_reference_under_the_prefix_only() {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let master = commit_on_master(&test_repo, "only on master");
+    let feature = test_repo.tip_oid("feature");
+    let base = test_repo.repository_manager().open().unwrap().find_commit(feature).unwrap().parent_id(0).unwrap();
+    test_repo.create_local_branch("group/one", feature);
+    test_repo.create_local_branch("group/deeper/two", base);
+
+    let graph = collect(&test_repo, railway::HistoryScope::Prefix("refs/heads/group/".to_owned()));
+
+    assert!(commit_at(&graph, feature).is_some());
+    assert!(commit_at(&graph, base).is_some());
+    assert!(commit_at(&graph, master).is_none());
+}
