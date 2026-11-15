@@ -4,10 +4,7 @@ use gtk::prelude::*;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::error;
 use std::fs;
-use std::fs::File;
-use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
 use std::str;
@@ -15,7 +12,7 @@ use std::str;
 use git2::build::CheckoutBuilder;
 use git2::Error;
 
-use crate::diff::{self, FileDiff};
+use crate::diff::DiffTarget;
 use crate::diff_view::DiffViewer;
 use crate::repository_ext::RepositoryExt;
 use crate::repository_manager::RepositoryManager;
@@ -134,7 +131,7 @@ impl CommitWindow {
         right.set_shrink_start_child(true);
         root.set_end_child(Some(&right));
 
-        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
+        let diff_viewer = DiffViewer::new(repository_manager.differ());
         right.set_start_child(Some(&diff_viewer.widget()));
 
         let bottom = gtk::Box::builder()
@@ -616,54 +613,13 @@ impl CommitWindow {
     }
 
     pub fn work_tree_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = self.repository_manager.open()?;
-
-        let path = Path::new(filename);
-        let status = repo.status_file(path)?;
-        if status == git2::Status::WT_NEW {
-            self.show_new_file(path);
-            return Ok(());
-        }
-
-        let mut diff_opts = git2::DiffOptions::new();
-        diff_opts.pathspec(filename);
-        let diff = repo.diff_index_to_workdir(None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
+        self.diff_viewer
+            .show(&DiffTarget::WorkTree(filename.to_string()))
     }
 
     pub fn index_files_selected(&self, filename: &str) -> Result<(), Error> {
-        let repo = self.repository_manager.open()?;
-
-        let mut diff_opts = git2::DiffOptions::new();
-        diff_opts.pathspec(filename);
-
-        let head_ref = repo.head()?;
-        let head_tree_object = head_ref.peel(git2::ObjectType::Tree)?;
-        let head_tree = head_tree_object.as_tree().unwrap();
-
-        let diff = repo.diff_tree_to_index(Some(head_tree), None, Some(&mut diff_opts))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
-    }
-
-    fn show_new_file(&self, path_in_repository: &Path) {
-        let name = path_in_repository.to_string_lossy();
-        let text = match self.read_contents(path_in_repository) {
-            Ok(s) => s,
-            Err(err) => format!("This file is not browsable: {}", err),
-        };
-        self.diff_viewer.show_files(vec![FileDiff::all_added(&name, &text)]);
-    }
-
-    fn read_contents(&self, path_in_repository: &Path) -> Result<String, Box<dyn error::Error>> {
-        let repo = self.repository_manager.open()?;
-        let path = repo.get_full_path(path_in_repository).unwrap();
-
-        let mut s = String::new();
-        let mut f = File::open(path)?;
-        f.read_to_string(&mut s)?;
-        Ok(s)
+        self.diff_viewer
+            .show(&DiffTarget::Index(filename.to_string()))
     }
 
     pub fn connect_commited<F>(&self, callback: F)

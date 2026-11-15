@@ -4,7 +4,6 @@ use git2::{Diff, DiffFindOptions, Error, Oid, Repository, Tree};
 
 use super::from_git::status_of;
 use super::model::FileStatus;
-use crate::repository_manager::RepositoryManager;
 
 /// The diff between two trees, with files that were renamed found as renamed
 /// rather than as one deleted and one added. The file list and the diff of a
@@ -33,18 +32,18 @@ pub struct ListCommitDiffResult {
     pub files: Vec<ListCommitDiffFileEntry>,
 }
 
-pub fn list_commit_diff_files(
-    repository_manager: &RepositoryManager,
+/// The files a commit changed against its first parent. See `Differ::commit_file_list`.
+pub(super) fn list_commit_diff_files(
+    repo: &Repository,
     oid: Oid,
 ) -> Result<ListCommitDiffResult, Error> {
-    let repo = repository_manager.open()?;
     let current_commit = repo.find_commit(oid)?;
     // TODO: treat multiple commit
     let parent_commit = current_commit.parent(0)?;
 
     let parent_tree = parent_commit.tree()?;
     let current_tree = current_commit.tree()?;
-    let diff = diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
+    let diff = diff_trees(repo, Some(&parent_tree), Some(&current_tree))?;
 
     let mut files: Vec<ListCommitDiffFileEntry> = Vec::new();
     diff.foreach(
