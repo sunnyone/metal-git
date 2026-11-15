@@ -37,8 +37,11 @@ pub mod work_tree_status;
 pub fn run_app() {
     static_resource::init();
 
+    // Each launch works on the repository of its own working directory, so a
+    // second launch must not be forwarded to an already running instance.
     let app = gtk::Application::builder()
         .application_id("org.sunnyone.MetalGit")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     app.connect_activate(|app| {
