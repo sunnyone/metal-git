@@ -1,9 +1,7 @@
-use std::process::Command;
-
 fn main() {
-    Command::new("glib-compile-resources")
-       .args(["--generate", "resources.xml"])
-       .current_dir("src/resources")
-       .status()
-       .unwrap();
+    glib_build_tools::compile_resources(
+        &["src/resources"],
+        "src/resources/resources.xml",
+        "resources.gresource",
+    );
 }

@@ -17,3 +17,6 @@ similar = "3.2.1"
 
 [dev-dependencies]
 tempdir = "0.3"
+
+[build-dependencies]
+glib-build-tools = "0.22"
