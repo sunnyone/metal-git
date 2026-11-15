@@ -251,7 +251,7 @@ fn history_window_scenarios() {
     branch_tree_selection_should_choose_what_the_history_shows(&app);
     branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(&app);
     branch_tree_double_click_should_check_out_a_remote_branch(&app);
-    branch_tree_should_be_hidden_and_shown_by_the_toggle_action(&app);
+    sidebar_should_be_hidden_and_shown_by_the_toggle_action(&app);
 }
 
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window(app: &gtk::Application) {
@@ -461,29 +461,29 @@ fn branch_tree_double_click_should_check_out_a_remote_branch(app: &gtk::Applicat
     assert!(branch_tree_labels(&history_window).contains(&"Current Branch (group_feature)".to_owned()));
 }
 
-fn branch_tree_should_be_hidden_and_shown_by_the_toggle_action(app: &gtk::Application) {
+fn sidebar_should_be_hidden_and_shown_by_the_toggle_action(app: &gtk::Application) {
     let test_repo = HistoryWindowTestRepo::new();
     let history_window = open_history_window(app, &test_repo);
-    let path = app_settings::branch_tree_visible_path();
-    assert!(history_window.branch_tree_scrolled.is_visible());
+    let path = app_settings::sidebar_visible_path();
+    assert!(history_window.sidebar.is_visible());
 
-    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
-    assert!(!history_window.branch_tree_scrolled.is_visible());
-    assert!(!app_settings::load_branch_tree_visible(&path));
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    assert!(!history_window.sidebar.is_visible());
+    assert!(!app_settings::load_sidebar_visible(&path));
 
     // The history keeps what the hidden tree chose
     history_window.branch_tree_selection.set_selected(branch_tree_position(&history_window, "feature_test"));
     assert!(!graph_contains(&history_window, test_repo.tip));
 
-    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
-    assert!(history_window.branch_tree_scrolled.is_visible());
-    assert!(app_settings::load_branch_tree_visible(&path));
-    let accels = app.accels_for_action("win.toggle-branch-tree");
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    assert!(history_window.sidebar.is_visible());
+    assert!(app_settings::load_sidebar_visible(&path));
+    let accels = app.accels_for_action("win.toggle-sidebar");
     assert_eq!(vec!["F9"], accels.iter().map(|accel| accel.as_str()).collect::<Vec<_>>());
 
     // The next window starts hidden when it was hidden last
-    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
     let next_window = open_history_window(app, &test_repo);
-    assert!(!next_window.branch_tree_scrolled.is_visible());
-    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
+    assert!(!next_window.sidebar.is_visible());
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
 }
