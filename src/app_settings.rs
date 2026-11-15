@@ -18,14 +18,18 @@ pub fn load_history_scope(path: &Path) -> HistoryScope {
     }
 }
 
-pub fn save_history_scope(path: &Path, scope: HistoryScope) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+/// Only all branches and the current branch are kept. A scope of one
+/// reference or prefix leaves the file as it is, so the next launch starts
+/// from the last of those two.
+pub fn save_history_scope(path: &Path, scope: &HistoryScope) -> io::Result<()> {
     let value = match scope {
         HistoryScope::AllBranches => ALL_BRANCHES_VALUE,
         HistoryScope::CurrentBranch => CURRENT_BRANCH_VALUE,
+        HistoryScope::Ref(_) | HistoryScope::Prefix(_) => return Ok(()),
     };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(path, value)
 }
 
@@ -85,4 +89,29 @@ pub fn save_hide_whitespace(path: &Path, hide: bool) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, if hide { HIDE_VALUE } else { SHOW_VALUE })
+}
+
+const VISIBLE_VALUE: &str = "visible";
+const HIDDEN_VALUE: &str = "hidden";
+
+pub fn branch_tree_visible_path() -> PathBuf {
+    gtk::glib::user_config_dir()
+        .join("metal-git")
+        .join("branch-tree-visible")
+}
+
+/// Whether the history window shows the branch tree. A missing or unreadable
+/// file means the default, showing it.
+pub fn load_branch_tree_visible(path: &Path) -> bool {
+    !matches!(
+        fs::read_to_string(path).as_deref().map(str::trim),
+        Ok(HIDDEN_VALUE)
+    )
+}
+
+pub fn save_branch_tree_visible(path: &Path, visible: bool) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, if visible { VISIBLE_VALUE } else { HIDDEN_VALUE })
 }

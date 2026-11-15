@@ -8,10 +8,15 @@ use git2::{Error, Oid};
 use crate::repository_manager::RepositoryManager;
 
 /// Which commits the history shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum HistoryScope {
     AllBranches,
     CurrentBranch,
+    /// The commits reachable from one reference, like `refs/heads/feature/login`
+    Ref(String),
+    /// The commits reachable from every reference whose name starts with the
+    /// prefix, like `refs/heads/feature/`
+    Prefix(String),
 }
 
 #[derive(Clone, PartialEq)]
@@ -384,11 +389,17 @@ pub fn collect_tree(repository_manager: &RepositoryManager, scope: HistoryScope)
 
     // Commit times alone can put a parent above a child that has the same time
     revwalk.set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::TIME)?;
-    revwalk.push_head()?;
-    if scope == HistoryScope::AllBranches {
-        revwalk.push_glob("refs/heads/*")?;
-        revwalk.push_glob("refs/remotes/*")?;
-        revwalk.push_glob("refs/tags/*")?;
+    match &scope {
+        HistoryScope::AllBranches => {
+            revwalk.push_head()?;
+            revwalk.push_glob("refs/heads/*")?;
+            revwalk.push_glob("refs/remotes/*")?;
+            revwalk.push_glob("refs/tags/*")?;
+        }
+        HistoryScope::CurrentBranch => revwalk.push_head()?,
+        // Peeled so that an annotated tag starts from its commit
+        HistoryScope::Ref(name) => revwalk.push(repo.find_reference(name)?.peel_to_commit()?.id())?,
+        HistoryScope::Prefix(prefix) => revwalk.push_glob(&format!("{}*", prefix))?,
     }
 
     let head = repo.head()?;

@@ -2,8 +2,9 @@ extern crate metal_git;
 extern crate tempdir;
 
 use metal_git::app_settings::{
-    load_diff_layout, load_hide_whitespace, load_history_scope, save_diff_layout,
-    save_hide_whitespace, save_history_scope, DiffLayout,
+    load_branch_tree_visible, load_diff_layout, load_hide_whitespace, load_history_scope,
+    save_branch_tree_visible, save_diff_layout, save_hide_whitespace, save_history_scope,
+    DiffLayout,
 };
 use metal_git::railway::HistoryScope;
 use std::fs;
@@ -30,11 +31,43 @@ pub fn saved_scope_is_loaded_back_and_creates_directories() {
     let temp_dir = TempDir::new("app-settings").unwrap();
     let path = temp_dir.path().join("metal-git").join("history-scope");
 
-    save_history_scope(&path, HistoryScope::CurrentBranch).unwrap();
+    save_history_scope(&path, &HistoryScope::CurrentBranch).unwrap();
     assert_eq!(HistoryScope::CurrentBranch, load_history_scope(&path));
 
-    save_history_scope(&path, HistoryScope::AllBranches).unwrap();
+    save_history_scope(&path, &HistoryScope::AllBranches).unwrap();
     assert_eq!(HistoryScope::AllBranches, load_history_scope(&path));
+}
+
+#[test]
+pub fn scope_of_one_reference_keeps_the_saved_scope() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("history-scope");
+
+    save_history_scope(&path, &HistoryScope::CurrentBranch).unwrap();
+    save_history_scope(&path, &HistoryScope::Ref("refs/heads/feature".to_owned())).unwrap();
+    save_history_scope(&path, &HistoryScope::Prefix("refs/tags/".to_owned())).unwrap();
+    assert_eq!(HistoryScope::CurrentBranch, load_history_scope(&path));
+}
+
+#[test]
+pub fn scope_of_one_reference_writes_nothing_when_nothing_was_saved() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("history-scope");
+
+    save_history_scope(&path, &HistoryScope::Ref("refs/heads/feature".to_owned())).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
+pub fn branch_tree_is_visible_unless_saved_as_hidden() {
+    let temp_dir = TempDir::new("app-settings").unwrap();
+    let path = temp_dir.path().join("metal-git").join("branch-tree-visible");
+
+    assert!(load_branch_tree_visible(&path));
+    save_branch_tree_visible(&path, false).unwrap();
+    assert!(!load_branch_tree_visible(&path));
+    save_branch_tree_visible(&path, true).unwrap();
+    assert!(load_branch_tree_visible(&path));
 }
 
 #[test]

@@ -187,25 +187,77 @@ fn action_for_label(menu: &gio::MenuModel, label: &str) -> String {
         .unwrap()
 }
 
-#[test]
-fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
-    // The history scope is saved under the user's config directory
-    let config_dir = TempDir::new("history-window-config").unwrap();
-    std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-    gtk::init().unwrap();
-    let test_repo = HistoryWindowTestRepo::new();
-    let app = gtk::Application::builder()
-        .application_id("org.sunnyone.MetalGit.HistoryWindowTest")
-        .build();
-    app.register(None::<&gio::Cancellable>).unwrap();
+fn open_history_window(app: &gtk::Application, test_repo: &HistoryWindowTestRepo) -> Rc<HistoryWindow> {
     let history_window = HistoryWindow::new(
-        &app,
+        app,
         Weak::<WindowManager>::new(),
         Rc::clone(&test_repo.repository_manager),
     );
     history_window.refresh();
     history_window.window.present();
     while gtk::glib::MainContext::default().iteration(false) {}
+    history_window
+}
+
+/// The labels of the visible tree rows, indented by two spaces per level.
+fn branch_tree_labels(history_window: &HistoryWindow) -> Vec<String> {
+    let model = &history_window.branch_tree_model;
+    (0..model.n_items())
+        .filter_map(|position| model.row(position))
+        .map(|row| {
+            let node = branch_tree_node(&row).unwrap();
+            format!("{}{}", "  ".repeat(row.depth() as usize), node.label)
+        })
+        .collect()
+}
+
+fn branch_tree_position(history_window: &HistoryWindow, label: &str) -> u32 {
+    let labels = branch_tree_labels(history_window);
+    labels
+        .iter()
+        .position(|row| row.trim_start() == label)
+        .unwrap_or_else(|| panic!("branch tree row not found: {label} in {labels:?}")) as u32
+}
+
+fn select_branch_tree_row(history_window: &HistoryWindow, label: &str) {
+    let position = branch_tree_position(history_window, label);
+    history_window.branch_tree_selection.set_selected(position);
+}
+
+fn selected_branch_tree_label(history_window: &HistoryWindow) -> String {
+    let row = history_window
+        .branch_tree_selection
+        .selected_item()
+        .and_downcast::<gtk::TreeListRow>()
+        .unwrap();
+    branch_tree_node(&row).unwrap().label.clone()
+}
+
+// GTK may only be used from the thread that initialized it, so the scenarios
+// that open a window run one after another in this single test.
+#[test]
+fn history_window_scenarios() {
+    // The settings are saved under the user's config directory
+    let config_dir = TempDir::new("history-window-config").unwrap();
+    std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("org.sunnyone.MetalGit.HistoryWindowTest")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+
+    should_switch_from_the_right_clicked_history_row_and_refresh_the_window(&app);
+    branch_tree_should_list_the_references_in_folders(&app);
+    branch_tree_selection_should_choose_what_the_history_shows(&app);
+    branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(&app);
+    branch_tree_double_click_should_check_out_a_remote_branch(&app);
+    branch_tree_should_be_hidden_and_shown_by_the_toggle_action(&app);
+}
+
+fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window(app: &gtk::Application) {
+    app_settings::save_history_scope(&app_settings::history_scope_path(), &HistoryScope::AllBranches).unwrap();
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
     let initial_title = history_window.window.title();
 
     let root_row = row_for_commit(&history_window, test_repo.root);
@@ -274,10 +326,11 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
             .map(|title| title.split_once(' ').unwrap().0.to_owned())
     );
     // All branches stay visible, so the previous branch can be reached again.
-    assert_eq!(0, history_window.history_scope_dropdown.selected());
+    assert_eq!(HistoryScope::AllBranches, *history_window.history_scope.borrow());
+    assert_eq!("All Branches", selected_branch_tree_label(&history_window));
     assert!(graph_contains(&history_window, test_repo.tip));
 
-    history_window.history_scope_dropdown.set_selected(1);
+    select_branch_tree_row(&history_window, "Current Branch (feature_test)");
     assert!(!graph_contains(&history_window, test_repo.tip));
     assert_eq!(
         HistoryScope::CurrentBranch,
@@ -315,4 +368,122 @@ fn should_mark_only_the_current_branch_label() {
          <span foreground=\"#a00000\"><b>[origin/master]</b></span> subject &lt;1&gt;",
         markup
     );
+}
+
+fn branch_tree_should_list_the_references_in_folders(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    {
+        let repo = test_repo.repository_manager.open().unwrap();
+        let middle = repo.find_commit(test_repo.middle).unwrap();
+        repo.branch("user/me/fix", &middle, false).unwrap();
+        repo.reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/master", false, "test")
+            .unwrap();
+    }
+    let history_window = open_history_window(app, &test_repo);
+
+    assert_eq!(
+        vec![
+            "All Branches",
+            "Current Branch (master)",
+            "Local",
+            "  user/me/",
+            "    fix",
+            "  feature_test",
+            "  master",
+            "Remote",
+            "  origin/",
+            "    group_feature",
+            "    master",
+        ],
+        branch_tree_labels(&history_window)
+    );
+}
+
+fn branch_tree_selection_should_choose_what_the_history_shows(app: &gtk::Application) {
+    app_settings::save_history_scope(&app_settings::history_scope_path(), &HistoryScope::AllBranches).unwrap();
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+
+    select_branch_tree_row(&history_window, "feature_test");
+    assert!(!graph_contains(&history_window, test_repo.tip));
+    assert_eq!(test_repo.middle, history_window.graph.borrow().commit(0).unwrap().oid);
+    // Only all branches and the current branch are kept for the next launch
+    assert_eq!(
+        HistoryScope::AllBranches,
+        app_settings::load_history_scope(&app_settings::history_scope_path())
+    );
+
+    // A refresh keeps the selected row and what it shows
+    history_window.refresh();
+    assert_eq!("feature_test", selected_branch_tree_label(&history_window));
+    assert!(!graph_contains(&history_window, test_repo.tip));
+
+    select_branch_tree_row(&history_window, "origin/");
+    assert!(graph_contains(&history_window, test_repo.tip));
+
+    history_window.show_all_branches();
+    assert_eq!("All Branches", selected_branch_tree_label(&history_window));
+    assert_eq!(HistoryScope::AllBranches, *history_window.history_scope.borrow());
+}
+
+fn branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+    select_branch_tree_row(&history_window, "feature_test");
+
+    test_repo
+        .repository_manager
+        .open()
+        .unwrap()
+        .find_branch("feature_test", git2::BranchType::Local)
+        .unwrap()
+        .delete()
+        .unwrap();
+    history_window.refresh();
+
+    assert_eq!(HistoryScope::AllBranches, *history_window.history_scope.borrow());
+    assert_eq!("All Branches", selected_branch_tree_label(&history_window));
+    assert!(graph_contains(&history_window, test_repo.tip));
+}
+
+fn branch_tree_double_click_should_check_out_a_remote_branch(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+
+    let position = branch_tree_position(&history_window, "group_feature");
+    history_window
+        .branch_tree_view
+        .emit_by_name::<()>("activate", &[&position]);
+    wait_for_task(&history_window);
+
+    let repo = test_repo.repository_manager.open().unwrap();
+    assert_eq!("group_feature", repo.head().unwrap().shorthand().unwrap());
+    assert!(branch_tree_labels(&history_window).contains(&"Current Branch (group_feature)".to_owned()));
+}
+
+fn branch_tree_should_be_hidden_and_shown_by_the_toggle_action(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+    let path = app_settings::branch_tree_visible_path();
+    assert!(history_window.branch_tree_scrolled.is_visible());
+
+    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
+    assert!(!history_window.branch_tree_scrolled.is_visible());
+    assert!(!app_settings::load_branch_tree_visible(&path));
+
+    // The history keeps what the hidden tree chose
+    history_window.branch_tree_selection.set_selected(branch_tree_position(&history_window, "feature_test"));
+    assert!(!graph_contains(&history_window, test_repo.tip));
+
+    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
+    assert!(history_window.branch_tree_scrolled.is_visible());
+    assert!(app_settings::load_branch_tree_visible(&path));
+    let accels = app.accels_for_action("win.toggle-branch-tree");
+    assert_eq!(vec!["F9"], accels.iter().map(|accel| accel.as_str()).collect::<Vec<_>>());
+
+    // The next window starts hidden when it was hidden last
+    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
+    let next_window = open_history_window(app, &test_repo);
+    assert!(!next_window.branch_tree_scrolled.is_visible());
+    WidgetExt::activate_action(&history_window.window, "win.toggle-branch-tree", None).unwrap();
 }

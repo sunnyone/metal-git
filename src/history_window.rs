@@ -1,7 +1,8 @@
 use crate::app_settings;
 use crate::background_task::TaskRunner;
-use crate::branch::BranchCandidate;
+use crate::branch::{BranchCandidate, BranchKind};
 use crate::branch_context_menu::BranchContextMenu;
+use crate::branch_tree::{self, BranchTreeKind, BranchTreeNode};
 use crate::commit_diff_panel::CommitDiffPanel;
 use crate::fetch_operation::FetchOperation;
 use crate::gtk_utils;
@@ -26,12 +27,16 @@ use gtk::glib::Propagation;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 // How long a closing window waits for a running task to clean up
 const TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+
+const TOGGLE_BRANCH_TREE_ACTION: &str = "toggle-branch-tree";
+const BRANCH_TREE_WIDTH: i32 = 220;
 
 pub struct HistoryWindow {
     window: gtk::ApplicationWindow,
@@ -50,7 +55,18 @@ pub struct HistoryWindow {
     push_available: Cell<bool>,
     commit_button: gtk_utils::BadgeButton,
     refresh_button: gtk::Button,
-    history_scope_dropdown: gtk::DropDown,
+    history_scope: RefCell<HistoryScope>,
+    branch_tree_paned: gtk::Paned,
+    branch_tree_scrolled: gtk::ScrolledWindow,
+    // Where the divider goes back to when the hidden tree is shown again
+    branch_tree_position: Cell<i32>,
+    // Items are BoxedAnyObject(Rc<BranchTreeNode>), the rows at the top level
+    branch_tree_store: gio::ListStore,
+    branch_tree_model: gtk::TreeListModel,
+    branch_tree_selection: gtk::SingleSelection,
+    branch_tree_view: gtk::ListView,
+    // True while the tree is rebuilt, so that its selection does not change the scope
+    updating_branch_tree: Cell<bool>,
     history_list_view: gtk::ListView,
     // Items are BoxedAnyObject(usize) row indexes into `graph`.
     history_store: gio::ListStore,
@@ -90,12 +106,18 @@ impl HistoryWindow {
             .build();
         root.append(&button_row);
 
-        let history_scope_dropdown = gtk::DropDown::from_strings(&HISTORY_SCOPE_LABELS);
-        history_scope_dropdown.set_tooltip_text(Some("Choose which commits the history shows"));
-        history_scope_dropdown.set_selected(history_scope_index(app_settings::load_history_scope(
-            &app_settings::history_scope_path(),
-        )));
-        button_row.append(&history_scope_dropdown);
+        let branch_tree_visible = app_settings::load_branch_tree_visible(&app_settings::branch_tree_visible_path());
+        let toggle_branch_tree_action =
+            gio::SimpleAction::new_stateful(TOGGLE_BRANCH_TREE_ACTION, None, &branch_tree_visible.to_variant());
+        window.add_action(&toggle_branch_tree_action);
+        app.set_accels_for_action(&format!("win.{}", TOGGLE_BRANCH_TREE_ACTION), &["F9"]);
+
+        let branch_tree_toggle = gtk::ToggleButton::builder()
+            .label("Branches")
+            .tooltip_text("Branch tree (F9)")
+            .action_name(format!("win.{}", TOGGLE_BRANCH_TREE_ACTION))
+            .build();
+        button_row.append(&branch_tree_toggle);
 
         let button_row_spacer = gtk::Box::builder().hexpand(true).build();
         button_row.append(&button_row_spacer);
@@ -128,7 +150,45 @@ impl HistoryWindow {
         main_paned.set_shrink_start_child(true);
         main_paned.set_resize_end_child(true);
         main_paned.set_shrink_end_child(true);
-        root.append(&main_paned);
+
+        let branch_tree_store = gio::ListStore::new::<BoxedAnyObject>();
+        let branch_tree_model = gtk::TreeListModel::new(branch_tree_store.clone(), false, false, |item| {
+            let node = item.downcast_ref::<BoxedAnyObject>()?.borrow::<Rc<BranchTreeNode>>().clone();
+            if node.children.is_empty() {
+                return None;
+            }
+            let children = gio::ListStore::new::<BoxedAnyObject>();
+            for child in &node.children {
+                children.append(&BoxedAnyObject::new(Rc::new(child.clone())));
+            }
+            Some(children.upcast())
+        });
+        let branch_tree_selection = gtk::SingleSelection::new(Some(branch_tree_model.clone()));
+        branch_tree_selection.set_autoselect(false);
+        let branch_tree_view =
+            gtk::ListView::new(Some(branch_tree_selection.clone()), None::<gtk::ListItemFactory>);
+        branch_tree_view.add_css_class("branch-tree");
+        let branch_tree_scrolled = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .min_content_width(120)
+            .child(&branch_tree_view)
+            .build();
+        branch_tree_scrolled.set_visible(branch_tree_visible);
+
+        // The tree cannot be dragged closed: it is hidden with the toggle button or F9
+        let branch_tree_paned = gtk::Paned::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .wide_handle(true)
+            .build();
+        branch_tree_paned.set_start_child(Some(&branch_tree_scrolled));
+        branch_tree_paned.set_end_child(Some(&main_paned));
+        branch_tree_paned.set_position(BRANCH_TREE_WIDTH);
+        branch_tree_paned.set_resize_start_child(false);
+        branch_tree_paned.set_shrink_start_child(false);
+        branch_tree_paned.set_resize_end_child(true);
+        branch_tree_paned.set_shrink_end_child(false);
+        root.append(&branch_tree_paned);
 
         // ListView only creates widgets for the visible rows, so startup time
         // does not grow with the number of commits.
@@ -213,7 +273,15 @@ impl HistoryWindow {
                 push_available: Cell::new(true),
                 commit_button,
                 refresh_button,
-                history_scope_dropdown,
+                history_scope: RefCell::new(app_settings::load_history_scope(&app_settings::history_scope_path())),
+                branch_tree_paned,
+                branch_tree_scrolled,
+                branch_tree_position: Cell::new(BRANCH_TREE_WIDTH),
+                branch_tree_store,
+                branch_tree_model,
+                branch_tree_selection,
+                branch_tree_view,
+                updating_branch_tree: Cell::new(false),
                 history_list_view,
                 history_store,
                 history_selection,
@@ -238,10 +306,30 @@ impl HistoryWindow {
         install_history_list_css();
         history_window.setup_history_list();
 
+        history_window.setup_branch_tree();
+
         let w = Rc::downgrade(&history_window);
-        history_window.history_scope_dropdown.connect_selected_notify(move |_| {
-            w.upgrade().unwrap().history_scope_changed();
+        toggle_branch_tree_action.connect_change_state(move |action, state| {
+            let Some(visible) = state.and_then(|state| state.get::<bool>()) else { return };
+            action.set_state(&visible.to_variant());
+            if let Some(w) = w.upgrade() {
+                w.set_branch_tree_visible(visible);
+            }
         });
+
+        // Children like the history list get the key first, so this only sees an unused Escape
+        let key_controller = gtk::EventControllerKey::new();
+        let w = Rc::downgrade(&history_window);
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            if key != gdk::Key::Escape {
+                return Propagation::Proceed;
+            }
+            if let Some(w) = w.upgrade() {
+                w.show_all_branches();
+            }
+            Propagation::Stop
+        });
+        history_window.window.add_controller(key_controller);
 
         let w = Rc::downgrade(&history_window);
         history_window.fetch_button.connect_clicked(move |_| {
@@ -325,6 +413,158 @@ impl HistoryWindow {
         });
     }
 
+    fn setup_branch_tree(self: &Rc<Self>) {
+        let factory = gtk::SignalListItemFactory::new();
+        factory.connect_setup(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let label = gtk::Label::builder().xalign(0.0).build();
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            let expander = gtk::TreeExpander::new();
+            expander.set_child(Some(&label));
+            list_item.set_child(Some(&expander));
+        });
+        factory.connect_bind(|_, list_item| {
+            let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
+            let Some(expander) = list_item.child().and_downcast::<gtk::TreeExpander>() else { return };
+            let row = list_item.item().and_downcast::<gtk::TreeListRow>();
+            expander.set_list_row(row.as_ref());
+            let Some(node) = row.as_ref().and_then(branch_tree_node) else { return };
+            if let Some(label) = expander.child().and_downcast::<gtk::Label>() {
+                label.set_label(&node.label);
+                label.set_css_classes(if node.kind == BranchTreeKind::Header { &["branch-tree-header"] } else { &[] });
+            }
+            // A line between the current branch and the references below it
+            if node.kind == BranchTreeKind::CurrentBranch {
+                expander.add_css_class("branch-tree-last-scope");
+            } else {
+                expander.remove_css_class("branch-tree-last-scope");
+            }
+        });
+        self.branch_tree_view.set_factory(Some(&factory));
+
+        let w = Rc::downgrade(self);
+        self.branch_tree_selection.connect_selected_notify(move |selection| {
+            let Some(w) = w.upgrade() else { return };
+            if w.updating_branch_tree.get() {
+                return;
+            }
+            if let Some(node) = selection.selected_item().and_downcast::<gtk::TreeListRow>().as_ref().and_then(branch_tree_node) {
+                w.set_history_scope(node.scope.clone());
+            }
+        });
+
+        // A double click, or Enter, checks out a branch
+        let w = Rc::downgrade(self);
+        self.branch_tree_view.connect_activate(move |_, position| {
+            let Some(w) = w.upgrade() else { return };
+            let Some(node) = w.branch_tree_model.row(position).as_ref().and_then(branch_tree_node) else { return };
+            w.check_out_branch_tree_node(&node);
+        });
+    }
+
+    /// Rebuilds the tree from the references, keeping the folders that were
+    /// collapsed, and selects the row of the history scope again. A scope whose
+    /// reference is gone goes back to all branches.
+    fn load_branch_tree(&self) -> Result<(), Error> {
+        let repo = self.repository_manager.open()?;
+        let nodes = branch_tree::collect_branch_tree(&repo)?;
+
+        let collapsed = (0..self.branch_tree_model.n_items())
+            .filter_map(|position| self.branch_tree_model.row(position))
+            .filter(|row| row.is_expandable() && !row.is_expanded())
+            .filter_map(|row| branch_tree_node(&row).map(|node| node.scope.clone()))
+            .collect::<HashSet<_>>();
+
+        if !branch_tree::contains_scope(&nodes, &self.history_scope.borrow()) {
+            self.history_scope.replace(HistoryScope::AllBranches);
+        }
+
+        self.updating_branch_tree.set(true);
+        let items = nodes
+            .into_iter()
+            .map(|node| BoxedAnyObject::new(Rc::new(node)))
+            .collect::<Vec<_>>();
+        self.branch_tree_store.splice(0, self.branch_tree_store.n_items(), &items);
+
+        // Rows of an expanded folder come right after it, so they are visited next
+        let scope = self.history_scope.borrow().clone();
+        let mut selected = gtk::INVALID_LIST_POSITION;
+        let mut position = 0;
+        while let Some(row) = self.branch_tree_model.row(position) {
+            if let Some(node) = branch_tree_node(&row) {
+                if node.scope == scope {
+                    selected = position;
+                }
+                let holds_scope = scope_is_inside(&node.scope, &scope);
+                if row.is_expandable() && (holds_scope || !collapsed.contains(&node.scope)) {
+                    row.set_expanded(true);
+                }
+            }
+            position += 1;
+        }
+        self.branch_tree_selection.set_selected(selected);
+        self.updating_branch_tree.set(false);
+
+        Ok(())
+    }
+
+    fn set_history_scope(&self, scope: HistoryScope) {
+        if *self.history_scope.borrow() == scope {
+            return;
+        }
+        if let Err(err) = app_settings::save_history_scope(&app_settings::history_scope_path(), &scope) {
+            eprintln!("Failed to save the history scope: {}", err);
+        }
+        self.history_scope.replace(scope);
+        self.reload_history();
+    }
+
+    /// Escape goes back to all branches, whether the tree is shown or not.
+    fn show_all_branches(&self) {
+        let position = (0..self.branch_tree_model.n_items()).find(|position| {
+            self.branch_tree_model
+                .row(*position)
+                .as_ref()
+                .and_then(branch_tree_node)
+                .is_some_and(|node| node.kind == BranchTreeKind::AllBranches)
+        });
+        if let Some(position) = position {
+            // Selecting the row sets the scope
+            self.branch_tree_selection.set_selected(position);
+        }
+        self.set_history_scope(HistoryScope::AllBranches);
+    }
+
+    fn set_branch_tree_visible(&self, visible: bool) {
+        if visible == self.branch_tree_scrolled.is_visible() {
+            return;
+        }
+        if visible {
+            self.branch_tree_scrolled.set_visible(true);
+            self.branch_tree_paned.set_position(self.branch_tree_position.get());
+        } else {
+            self.branch_tree_position.set(self.branch_tree_paned.position());
+            self.branch_tree_scrolled.set_visible(false);
+        }
+        if let Err(err) = app_settings::save_branch_tree_visible(&app_settings::branch_tree_visible_path(), visible) {
+            eprintln!("Failed to save whether the branch tree is shown: {}", err);
+        }
+    }
+
+    fn check_out_branch_tree_node(&self, node: &BranchTreeNode) {
+        let kind = match node.kind {
+            BranchTreeKind::LocalBranch if !node.is_head => BranchKind::Local,
+            BranchTreeKind::RemoteBranch => BranchKind::Remote,
+            _ => return,
+        };
+        let Some(name) = node.branch_name() else { return };
+        self.switch_branch(BranchCandidate {
+            name: name.to_owned(),
+            kind,
+            is_current: false,
+        });
+    }
+
     pub fn connect_closed<F>(&self, callback: F)
     where
         F: Fn() + 'static,
@@ -380,7 +620,7 @@ impl HistoryWindow {
     fn load_history(&self) -> Result<(), Error> {
         self.history_store.remove_all();
 
-        let graph = railway::collect_tree(&self.repository_manager, self.history_scope())?;
+        let graph = railway::collect_tree(&self.repository_manager, self.history_scope.borrow().clone())?;
         self.graph.replace(Rc::new(graph));
         self.current_index.replace(None);
 
@@ -400,10 +640,15 @@ impl HistoryWindow {
 
     pub fn refresh(&self) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
-        dialog_when_error!("Failed to load history: {:?}", self.load_history());
+        dialog_when_error!("Failed to load branches: {:?}", self.load_branch_tree());
         self.update_pull_button();
         self.update_push_button();
         self.update_commit_button();
+        self.reload_history();
+    }
+
+    fn reload_history(&self) {
+        dialog_when_error!("Failed to load history: {:?}", self.load_history());
         self.status_bar.set_message(&format!("{} commits", self.graph.borrow().len()));
     }
 
@@ -566,17 +811,6 @@ impl HistoryWindow {
         self.push_button.button().set_sensitive(available && !self.task_runner.is_running());
     }
 
-    fn history_scope(&self) -> HistoryScope {
-        history_scope_from_index(self.history_scope_dropdown.selected())
-    }
-
-    fn history_scope_changed(&self) {
-        if let Err(err) = app_settings::save_history_scope(&app_settings::history_scope_path(), self.history_scope()) {
-            eprintln!("Failed to save the history scope: {}", err);
-        }
-        self.refresh();
-    }
-
     fn switch_branch(&self, candidate: BranchCandidate) {
         if let Some(git_dir) = self.git_dir() {
             long_running_operation::start_operation(
@@ -713,6 +947,16 @@ fn install_history_list_css() {
 
         button:disabled .button-badge {
             background-color: alpha(currentColor, 0.3);
+        }
+
+        .branch-tree-header {
+            font-weight: bold;
+            opacity: 0.7;
+        }
+
+        .branch-tree-last-scope {
+            border-bottom: 1px solid alpha(currentColor, 0.18);
+            padding-bottom: 4px;
         }
 
         .history-header {
@@ -884,19 +1128,20 @@ impl HistoryRow {
     }
 }
 
-const HISTORY_SCOPE_LABELS: [&str; 2] = ["All Branches", "Current Branch"];
-
-fn history_scope_index(scope: HistoryScope) -> u32 {
-    match scope {
-        HistoryScope::AllBranches => 0,
-        HistoryScope::CurrentBranch => 1,
-    }
+fn branch_tree_node(row: &gtk::TreeListRow) -> Option<Rc<BranchTreeNode>> {
+    row.item()
+        .and_downcast::<BoxedAnyObject>()
+        .map(|item| item.borrow::<Rc<BranchTreeNode>>().clone())
 }
 
-fn history_scope_from_index(index: u32) -> HistoryScope {
-    match index {
-        1 => HistoryScope::CurrentBranch,
-        _ => HistoryScope::AllBranches,
+/// Whether the folder of `outer` holds the reference or folder of `inner`, so
+/// that it is expanded to show the selected row.
+fn scope_is_inside(outer: &HistoryScope, inner: &HistoryScope) -> bool {
+    let HistoryScope::Prefix(prefix) = outer else { return false };
+    match inner {
+        HistoryScope::Ref(name) => name.starts_with(prefix.as_str()),
+        HistoryScope::Prefix(inner_prefix) => inner_prefix != prefix && inner_prefix.starts_with(prefix.as_str()),
+        _ => false,
     }
 }
 
