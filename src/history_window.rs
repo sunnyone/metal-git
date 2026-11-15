@@ -949,6 +949,12 @@ fn install_history_list_css() {
             background-color: alpha(currentColor, 0.3);
         }
 
+        .branch-tree row {
+            min-height: 28px;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+
         .branch-tree-header {
             font-weight: bold;
             opacity: 0.7;
