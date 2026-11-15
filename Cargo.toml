@@ -3,6 +3,9 @@ name = "metal-git"
 version = "0.0.1"
 authors = ["Yoichi Imai <sunnyone41@gmail.com>"]
 edition = "2021"
+description = "GUI Git frontend written in Rust with GTK 4"
+license = "MIT"
+repository = "https://github.com/sunnyone/metal-git"
 
 [lib]
 name = "metal_git"
@@ -20,3 +23,14 @@ tempdir = "0.3"
 
 [build-dependencies]
 glib-build-tools = "0.22"
+
+[package.metadata.deb]
+section = "vcs"
+depends = "$auto, librsvg2-common"
+extended-description = """\
+Metal Git is a GUI Git frontend written in Rust with gtk4-rs and git2-rs. \
+It opens the Git repository in the current working directory."""
+assets = [
+    ["target/release/metal-git", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/metal-git/", "644"],
+]
