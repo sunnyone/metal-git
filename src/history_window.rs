@@ -418,7 +418,8 @@ impl HistoryWindow {
         let factory = gtk::SignalListItemFactory::new();
         factory.connect_setup(|_, list_item| {
             let list_item = list_item.downcast_ref::<gtk::ListItem>().unwrap();
-            let check = gtk::Label::new(Some("\u{2713}"));
+            let check = gtk::Label::new(Some("\u{2714}"));
+            check.add_css_class("branch-tree-check");
             let label = gtk::Label::builder().xalign(0.0).build();
             label.set_ellipsize(gtk::pango::EllipsizeMode::End);
             let content = gtk::Box::builder().orientation(gtk::Orientation::Horizontal).spacing(4).build();
@@ -442,7 +443,11 @@ impl HistoryWindow {
             }
             if let Some(label) = content.last_child().and_downcast::<gtk::Label>() {
                 label.set_label(&node.label);
-                label.set_css_classes(if node.kind == BranchTreeKind::Header { &["branch-tree-header"] } else { &[] });
+                label.set_css_classes(match node.kind {
+                    BranchTreeKind::Header => &["branch-tree-header"],
+                    _ if node.is_head => &["branch-tree-head"],
+                    _ => &[],
+                });
             }
             // A line between the current branch and the references below it
             if node.kind == BranchTreeKind::CurrentBranch {
@@ -964,6 +969,20 @@ fn install_history_list_css() {
             min-height: 28px;
             padding-top: 0;
             padding-bottom: 0;
+        }
+
+        .branch-tree-check {
+            color: @theme_selected_bg_color;
+            font-weight: bold;
+        }
+
+        /* The selected row has the same color as its background */
+        .branch-tree row:selected .branch-tree-check {
+            color: inherit;
+        }
+
+        .branch-tree-head {
+            font-weight: bold;
         }
 
         .branch-tree-header {
