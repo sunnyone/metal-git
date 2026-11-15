@@ -112,8 +112,9 @@ impl HistoryWindow {
         window.add_action(&toggle_branch_tree_action);
         app.set_accels_for_action(&format!("win.{}", TOGGLE_BRANCH_TREE_ACTION), &["F9"]);
 
+        // Icon only, so that it takes as little of the toolbar as a sidebar toggle usually does
         let branch_tree_toggle = gtk::ToggleButton::builder()
-            .label("Branches")
+            .icon_name("metal-git-sidebar-symbolic")
             .tooltip_text("Branch tree (F9)")
             .action_name(format!("win.{}", TOGGLE_BRANCH_TREE_ACTION))
             .build();
