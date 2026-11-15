@@ -7,6 +7,8 @@ use std::fs;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
+const LOCAL_BRANCH_PREFIX: &str = "refs/heads/";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BranchKind {
     Local,
@@ -41,9 +43,12 @@ pub fn switch_local_branch(repo: &Repository, branch_name: &str) -> Result<(), E
         .name()
         .map_err(|_| Error::from_str("Local branch reference name is not valid UTF-8"))?;
     ensure_branch_is_not_checked_out_elsewhere(repo, reference_name)?;
+    // The same message as git checkout, which `git checkout -` and the recent
+    // branches read back
+    let message = format!("checkout: moving from {} to {}", head_reflog_name(repo)?, branch_name);
     let mut transaction = repo.transaction()?;
     transaction.lock_ref("HEAD")?;
-    transaction.set_symbolic_target("HEAD", reference_name, None, "switch branch")?;
+    transaction.set_symbolic_target("HEAD", reference_name, None, &message)?;
     repo.checkout_tree(tree.as_object(), Some(CheckoutBuilder::new().safe()))?;
     transaction.commit()
 }
@@ -63,6 +68,55 @@ pub fn create_tracking_branch_and_switch(
         return rollback_created_branch(&mut local_branch, error);
     }
     Ok(())
+}
+
+const CHECKOUT_REFLOG_PREFIX: &str = "checkout: moving from ";
+
+/// What HEAD is on, as the branch button shows it: the branch name, or
+/// `HEAD detached at <commit>`. A branch without commits yet is still named.
+pub fn head_label(repo: &Repository) -> Result<String, Error> {
+    let head = repo.find_reference("HEAD")?;
+    if let Some(target) = head.symbolic_target()? {
+        return Ok(target.strip_prefix(LOCAL_BRANCH_PREFIX).unwrap_or(target).to_owned());
+    }
+    let oid = head.target().ok_or_else(|| Error::from_str("HEAD points to nothing"))?;
+    let short_id = repo.find_object(oid, None)?.short_id()?;
+    Ok(format!("HEAD detached at {}", short_id.as_str().unwrap_or(&oid.to_string())))
+}
+
+/// The local branches HEAD was on before, the latest first, as recorded in
+/// the reflog of HEAD by checkouts. The current branch and branches that no
+/// longer exist are left out.
+pub fn recent_branches(repo: &Repository, limit: usize) -> Result<Vec<String>, Error> {
+    let current = repo.find_reference("HEAD")?.symbolic_target()?.map(str::to_owned);
+    let mut names: Vec<String> = Vec::new();
+    for entry in repo.reflog("HEAD")?.iter() {
+        if names.len() >= limit {
+            break;
+        }
+        let Ok(Some(message)) = entry.message() else { continue };
+        let Some(moving) = message.strip_prefix(CHECKOUT_REFLOG_PREFIX) else { continue };
+        // A reference name cannot have a space in it
+        let Some((from, _)) = moving.split_once(" to ") else { continue };
+        let is_current = current.as_deref() == Some(format!("{}{}", LOCAL_BRANCH_PREFIX, from).as_str());
+        if is_current || names.iter().any(|name| name == from) {
+            continue;
+        }
+        // A detached HEAD is recorded as a commit id, which is not a branch
+        if repo.find_branch(from, BranchType::Local).is_ok() {
+            names.push(from.to_owned());
+        }
+    }
+    Ok(names)
+}
+
+/// How a checkout names what HEAD was on: the branch, or the commit when detached.
+fn head_reflog_name(repo: &Repository) -> Result<String, Error> {
+    let head = repo.find_reference("HEAD")?;
+    if let Some(target) = head.symbolic_target()? {
+        return Ok(target.strip_prefix(LOCAL_BRANCH_PREFIX).unwrap_or(target).to_owned());
+    }
+    Ok(head.target().map(|oid| oid.to_string()).unwrap_or_default())
 }
 
 fn collect_candidates(

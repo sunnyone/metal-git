@@ -48,7 +48,7 @@ pub fn references_come_before_folders_and_names_are_sorted_naturally() {
     assert_eq!(
         vec![
             "All Branches",
-            "Current Branch (master)",
+            "Current Branch",
             "Local",
             "  feature",
             "  Issue-2",
@@ -145,20 +145,9 @@ pub fn headers_without_references_and_symbolic_references_are_left_out() {
     let nodes = collect_branch_tree(&repo).unwrap();
 
     assert_eq!(
-        vec!["All Branches", "Current Branch (master)", "Local", "  feature", "  master"],
+        vec!["All Branches", "Current Branch", "Local", "  feature", "  master"],
         labels(&nodes)
     );
-}
-
-#[test]
-pub fn detached_head_is_named_head() {
-    let test_repo = TestRepo::branches_with_distinct_files();
-    let repo = test_repo.repository_manager().open().unwrap();
-    repo.set_head_detached(test_repo.tip_oid("feature")).unwrap();
-
-    let nodes = collect_branch_tree(&repo).unwrap();
-
-    assert_eq!("Current Branch (HEAD)", nodes[1].label);
 }
 
 #[test]

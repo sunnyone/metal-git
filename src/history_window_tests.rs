@@ -330,7 +330,7 @@ fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window(app: 
     assert_eq!("All Branches", selected_branch_tree_label(&history_window));
     assert!(graph_contains(&history_window, test_repo.tip));
 
-    select_branch_tree_row(&history_window, "Current Branch (feature_test)");
+    select_branch_tree_row(&history_window, "Current Branch");
     assert!(!graph_contains(&history_window, test_repo.tip));
     assert_eq!(
         HistoryScope::CurrentBranch,
@@ -384,7 +384,7 @@ fn branch_tree_should_list_the_references_in_folders(app: &gtk::Application) {
     assert_eq!(
         vec![
             "All Branches",
-            "Current Branch (master)",
+            "Current Branch",
             "Local",
             "  feature_test",
             "  master",
@@ -458,7 +458,8 @@ fn branch_tree_double_click_should_check_out_a_remote_branch(app: &gtk::Applicat
 
     let repo = test_repo.repository_manager.open().unwrap();
     assert_eq!("group_feature", repo.head().unwrap().shorthand().unwrap());
-    assert!(branch_tree_labels(&history_window).contains(&"Current Branch (group_feature)".to_owned()));
+    // The local branch made for it shows up in the refreshed tree
+    assert!(branch_tree_labels(&history_window).contains(&"  group_feature".to_owned()));
 }
 
 fn sidebar_should_be_hidden_and_shown_by_the_toggle_action(app: &gtk::Application) {

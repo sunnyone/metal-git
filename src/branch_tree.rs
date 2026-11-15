@@ -75,8 +75,9 @@ pub fn collect_branch_tree(repo: &Repository) -> Result<Vec<BranchTreeNode>, Err
     let head_name = head_reference_name(repo);
     let mut nodes = vec![
         BranchTreeNode::new("All Branches".to_owned(), BranchTreeKind::AllBranches, HistoryScope::AllBranches, vec![]),
+        // The branch button names the branch, so the row does not
         BranchTreeNode::new(
-            current_branch_label(repo),
+            "Current Branch".to_owned(),
             BranchTreeKind::CurrentBranch,
             HistoryScope::CurrentBranch,
             vec![],
@@ -289,17 +290,4 @@ fn mark_head(nodes: &mut [BranchTreeNode], head_name: Option<&str>) {
 fn head_reference_name(repo: &Repository) -> Option<String> {
     let head = repo.find_reference("HEAD").ok()?;
     head.symbolic_target().ok().flatten().map(str::to_owned)
-}
-
-fn current_branch_label(repo: &Repository) -> String {
-    match repo.head() {
-        Ok(head) if repo.head_detached().unwrap_or(false) || !head.is_branch() => {
-            "Current Branch (HEAD)".to_owned()
-        }
-        Ok(head) => match head.shorthand() {
-            Ok(name) => format!("Current Branch ({})", name),
-            Err(_) => "Current Branch".to_owned(),
-        },
-        Err(_) => "Current Branch".to_owned(),
-    }
 }
