@@ -38,11 +38,23 @@ pub mod work_tree_status;
 pub fn run_app() {
     static_resource::init();
 
+    // Each launch works on the repository of its own working directory, so a
+    // second launch must not be forwarded to an already running instance.
     let app = gtk::Application::builder()
         .application_id("org.sunnyone.MetalGit")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
-    app.connect_activate(|app| {
+    let window_manager_cell: std::cell::OnceCell<std::rc::Rc<window_manager::WindowManager>> =
+        std::cell::OnceCell::new();
+    app.connect_activate(move |app| {
+        // Re-activation must not replace the window manager: that would drop
+        // the windows' state while their GTK windows are still on screen.
+        if let Some(window_manager) = window_manager_cell.get() {
+            window_manager.present();
+            return;
+        }
+
         if let Some(display) = gtk::gdk::Display::default() {
             gtk::IconTheme::for_display(&display).add_resource_path("/org/sunnyone/MetalGit/icons");
         }
@@ -51,10 +63,8 @@ pub fn run_app() {
         repository_manager.set_work_dir_path(".");
 
         let window_manager = window_manager::WindowManager::new(app, repository_manager);
-        unsafe {
-            app.set_data("metal-git-window-manager", window_manager.clone());
-        }
         window_manager.start();
+        let _ = window_manager_cell.set(window_manager);
     });
 
     app.run();

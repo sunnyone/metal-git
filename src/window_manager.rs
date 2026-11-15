@@ -56,6 +56,10 @@ impl WindowManager {
         });
     }
 
+    pub fn present(&self) {
+        self.with_windows(|windows| windows.history_window.show());
+    }
+
     pub fn show_commit_window(&self) {
         self.with_windows(|windows| {
             // TODO: messaging should be done in another class
