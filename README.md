@@ -37,6 +37,18 @@ On Ubuntu 22.04 or later:
 $ sudo apt install libgtk-4-dev libgit2-dev libglib2.0-dev-bin cmake
 ```
 
+## Debian package
+
+Build a `.deb` package with [cargo-deb](https://github.com/kornelski/cargo-deb) and install it:
+
+```bash
+$ cargo install cargo-deb
+$ cargo deb
+$ sudo apt install ./target/debian/metal-git_*.deb
+```
+
+The package depends on the libraries of the Ubuntu release it is built on, so build it on the oldest release you want to install it on.
+
 ## Author
 
 Yoichi Imai <sunnyone41@gmail.com>
