@@ -16,6 +16,8 @@ pub enum Row {
     Filler,
     FileHeader,
     HunkHeader,
+    /// Stands for unchanged lines left out of the diff
+    Gap,
     Line {
         kind: LineKind,
         old_lineno: Option<u32>,
@@ -38,6 +40,7 @@ impl Row {
             Row::Filler => text::FILLER_BACKGROUND,
             Row::FileHeader => text::FILE_HEADER_BACKGROUND,
             Row::HunkHeader => text::HUNK_HEADER_BACKGROUND,
+            Row::Gap => text::GAP_BACKGROUND,
             Row::Line { kind, .. } => match kind {
                 LineKind::Added => text::ADDED_BACKGROUND,
                 LineKind::Removed => text::REMOVED_BACKGROUND,
@@ -160,6 +163,16 @@ impl DiffTextView {
             current.resize(at, Row::Blank);
         }
         current.splice(at..at, rows);
+        drop(current);
+        self.queue_draw();
+    }
+
+    /// Removes the rows of deleted lines.
+    pub fn remove_rows(&self, lines: std::ops::Range<usize>) {
+        let mut current = self.imp().rows.borrow_mut();
+        let end = lines.end.min(current.len());
+        let start = lines.start.min(end);
+        current.drain(start..end);
         drop(current);
         self.queue_draw();
     }

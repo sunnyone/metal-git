@@ -11,8 +11,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff::{self, FileDiff, FileStatus, LineKind};
+use crate::diff::{self, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
 use split::SplitView;
+use text::RevealFileGap;
 use unified::UnifiedView;
 
 const LAYOUTS: [DiffLayout; 2] = [DiffLayout::Unified, DiffLayout::Split];
@@ -66,10 +67,13 @@ pub struct DiffViewer {
     split: Rc<SplitView>,
     /// Kept to show again in the other layout
     content: SharedContent,
+    /// Reads the old versions of files, which hold the unchanged lines that
+    /// the diff leaves out
+    read_old_content: OldContentReader,
 }
 
 impl DiffViewer {
-    pub fn new() -> Rc<DiffViewer> {
+    pub fn new(read_old_content: OldContentReader) -> Rc<DiffViewer> {
         let summary = gtk::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -119,7 +123,20 @@ impl DiffViewer {
             unified,
             split,
             content,
+            read_old_content,
         });
+
+        let w = Rc::downgrade(&viewer);
+        let reveal: RevealFileGap = Rc::new(move |file_index, before_hunk, how| {
+            if let Some(viewer) = w.upgrade() {
+                dialog_when_error!(
+                    "Failed to show the unchanged lines: {}",
+                    viewer.reveal(file_index, before_hunk, how)
+                );
+            }
+        });
+        viewer.unified.connect_reveal(reveal.clone());
+        viewer.split.connect_reveal(reveal);
 
         let w = Rc::downgrade(&viewer);
         viewer.layout_dropdown.connect_selected_notify(move |_| {
@@ -150,6 +167,34 @@ impl DiffViewer {
             DiffLayout::Unified => self.unified.scroll_to_file(file_index),
             DiffLayout::Split => self.split.scroll_to_file(file_index),
         }
+    }
+
+    /// Reveals unchanged lines of a gap of a file, reading its old version
+    /// the first time, and draws the file again. The other layout draws the
+    /// revealed lines when it is shown.
+    fn reveal(
+        &self,
+        file_index: usize,
+        before_hunk: usize,
+        how: Reveal,
+    ) -> Result<(), git2::Error> {
+        {
+            let mut content = self.content.borrow_mut();
+            let Some(file) = content.files.get_mut(file_index) else {
+                return Ok(());
+            };
+            if file.old_content.is_none() {
+                file.old_content = Some((self.read_old_content)(file)?);
+            }
+            if !file.reveal(before_hunk, how) {
+                return Ok(());
+            }
+        }
+        match self.layout() {
+            DiffLayout::Unified => self.unified.reload_file(file_index),
+            DiffLayout::Split => self.split.reload_file(file_index),
+        }
+        Ok(())
     }
 
     fn layout(&self) -> DiffLayout {

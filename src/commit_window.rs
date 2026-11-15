@@ -134,7 +134,7 @@ impl CommitWindow {
         right.set_shrink_start_child(true);
         root.set_end_child(Some(&right));
 
-        let diff_viewer = DiffViewer::new();
+        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
         right.set_start_child(Some(&diff_viewer.widget()));
 
         let bottom = gtk::Box::builder()

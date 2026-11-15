@@ -310,3 +310,145 @@ pub fn diff_trees_finds_renamed_files() {
 	);
 	assert!(files.iter().all(|f| !f.binary));
 }
+
+fn numbered_lines(count: usize) -> String {
+	(1..=count).map(|i| format!("line {}\n", i)).collect()
+}
+
+/// A diff of a 30-line file with lines 5 and 25 changed, each paired for
+/// emphasis, and the old version read.
+fn file_with_two_hunks() -> FileDiff {
+	let old = numbered_lines(30);
+	let new = old.replace("line 5\n", "line 50\n").replace("line 25\n", "line 250\n");
+	let mut file = diff_buffers(&old, &new, 3);
+	file.old_content = Some(old.lines().map(|l| l.to_string()).collect());
+	file
+}
+
+fn old_numbers(hunk: &diff::DiffHunk) -> Vec<u32> {
+	hunk.lines.iter().filter_map(|l| l.old_lineno).collect()
+}
+
+/// The ranges of a hunk header, without the text git adds after them.
+fn ranges_of(header: &str) -> &str {
+	let end = header.rfind("@@").unwrap() + 2;
+	&header[..end]
+}
+
+#[test]
+pub fn gaps_are_the_lines_before_between_and_after_the_hunks() {
+	let mut file = file_with_two_hunks();
+	let content = file.old_content.take();
+
+	assert_eq!(
+		vec![
+			diff::Gap { before_hunk: 0, old_start: 1, count: Some(1) },
+			diff::Gap { before_hunk: 1, old_start: 9, count: Some(13) },
+			// The last hunk ends with full context, so lines may follow
+			diff::Gap { before_hunk: 2, old_start: 29, count: None },
+		],
+		file.gaps()
+	);
+
+	file.old_content = content;
+	assert_eq!(Some(2), file.gaps()[2].count);
+}
+
+#[test]
+pub fn no_gap_follows_a_hunk_that_reaches_the_end_of_the_file() {
+	let old = numbered_lines(10);
+	let new = old.replace("line 9\n", "line nine\n");
+	let file = diff_buffers(&old, &new, 3);
+
+	assert!(file.gaps().iter().all(|gap| gap.before_hunk == 0));
+}
+
+#[test]
+pub fn reveal_down_continues_the_hunk_above() {
+	let mut file = file_with_two_hunks();
+
+	assert!(file.reveal(1, diff::Reveal::Down(4)));
+
+	let hunk = &file.hunks[0];
+	assert_eq!((2..=12).collect::<Vec<_>>(), old_numbers(hunk));
+	assert_eq!("line 12", hunk.lines.last().unwrap().content);
+	assert_eq!(LineKind::Context, hunk.lines.last().unwrap().kind);
+	assert_eq!("@@ -2,11 +2,11 @@", ranges_of(&hunk.header));
+	assert_eq!(diff::Gap { before_hunk: 1, old_start: 13, count: Some(9) }, file.gaps()[1]);
+}
+
+#[test]
+pub fn reveal_up_leads_into_the_hunk_below_and_keeps_its_pairs() {
+	let mut file = file_with_two_hunks();
+
+	assert!(file.reveal(1, diff::Reveal::Up(4)));
+
+	let hunk = &file.hunks[1];
+	assert_eq!(Some(18), hunk.lines[0].old_lineno);
+	assert_eq!("@@ -18,11 +18,11 @@", ranges_of(&hunk.header));
+	let (removed, added) = hunk.pairs[0];
+	assert_eq!("line 25", hunk.lines[removed].content);
+	assert_eq!("line 250", hunk.lines[added].content);
+}
+
+#[test]
+pub fn revealing_a_whole_gap_joins_the_hunks_around_it() {
+	let mut file = file_with_two_hunks();
+
+	assert!(file.reveal(1, diff::Reveal::All));
+
+	assert_eq!(1, file.hunks.len());
+	let hunk = &file.hunks[0];
+	assert_eq!("@@ -2,27 +2,27 @@", ranges_of(&hunk.header));
+	assert_eq!((2..=28).collect::<Vec<_>>(), old_numbers(hunk));
+	assert_eq!(2, hunk.pairs.len());
+	let rows = hunk.side_by_side();
+	assert_eq!(27, rows.len());
+}
+
+#[test]
+pub fn revealing_in_steps_joins_the_hunks_once_the_gap_is_gone() {
+	let mut file = file_with_two_hunks();
+
+	file.reveal(1, diff::Reveal::Down(10));
+	assert_eq!(2, file.hunks.len());
+	file.reveal(1, diff::Reveal::Up(10));
+
+	assert_eq!(1, file.hunks.len());
+	assert_eq!((2..=28).collect::<Vec<_>>(), old_numbers(&file.hunks[0]));
+}
+
+#[test]
+pub fn revealed_lines_are_numbered_in_the_new_file_after_added_lines() {
+	let old = numbered_lines(30);
+	let new = format!("added 1\nadded 2\n{}", old.replace("line 20\n", "line twenty\n"));
+	let mut file = diff_buffers(&old, &new, 3);
+	file.old_content = Some(old.lines().map(|l| l.to_string()).collect());
+
+	assert!(file.reveal(1, diff::Reveal::Down(2)));
+
+	let last = file.hunks[0].lines.last().unwrap();
+	assert_eq!((Some(5), Some(7)), (last.old_lineno, last.new_lineno));
+	assert_eq!("line 5", last.content);
+}
+
+#[test]
+pub fn reveal_reaches_the_start_and_the_end_of_the_file() {
+	let mut file = file_with_two_hunks();
+
+	assert!(file.reveal(0, diff::Reveal::All));
+	assert!(file.reveal(2, diff::Reveal::All));
+
+	assert_eq!(Some(1), file.hunks[0].lines[0].old_lineno);
+	assert_eq!(Some(30), file.hunks.last().unwrap().lines.last().unwrap().old_lineno);
+	assert!(file.gaps().iter().all(|gap| gap.before_hunk == 1));
+}
+
+#[test]
+pub fn reveal_needs_the_old_version() {
+	let mut file = file_with_two_hunks();
+	file.old_content = None;
+
+	assert!(!file.reveal(1, diff::Reveal::All));
+	assert_eq!(2, file.hunks.len());
+}

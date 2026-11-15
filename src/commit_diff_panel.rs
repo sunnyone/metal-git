@@ -31,7 +31,7 @@ impl CommitDiffPanel {
             .build();
         paned.set_start_child(Some(&list_scrolled));
 
-        let diff_viewer = DiffViewer::new();
+        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
         paned.set_end_child(Some(&diff_viewer.widget()));
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {
