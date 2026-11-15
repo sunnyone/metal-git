@@ -2,18 +2,21 @@
 
 use git2::{Diff, DiffFindOptions, Error, Oid, Repository, Tree};
 
-use super::from_git::status_of;
+use super::from_git::{status_of, DiffSettings};
 use super::model::FileStatus;
 
 /// The diff between two trees, with files that were renamed found as renamed
 /// rather than as one deleted and one added. The file list and the diff of a
 /// commit both come from it, so that they have the same files in the same order.
+/// Leaving out changes of whitespace keeps every file, with no hunks for one
+/// whose whitespace alone changed.
 pub fn diff_trees<'repo>(
     repo: &'repo Repository,
     old: Option<&Tree>,
     new: Option<&Tree>,
+    settings: DiffSettings,
 ) -> Result<Diff<'repo>, Error> {
-    let mut diff = repo.diff_tree_to_tree(old, new, None)?;
+    let mut diff = repo.diff_tree_to_tree(old, new, Some(&mut settings.options()))?;
     let mut opts = DiffFindOptions::new();
     opts.renames(true);
     diff.find_similar(Some(&mut opts))?;
@@ -43,7 +46,12 @@ pub(super) fn list_commit_diff_files(
 
     let parent_tree = parent_commit.tree()?;
     let current_tree = current_commit.tree()?;
-    let diff = diff_trees(repo, Some(&parent_tree), Some(&current_tree))?;
+    let diff = diff_trees(
+        repo,
+        Some(&parent_tree),
+        Some(&current_tree),
+        DiffSettings::default(),
+    )?;
 
     let mut files: Vec<ListCommitDiffFileEntry> = Vec::new();
     diff.foreach(

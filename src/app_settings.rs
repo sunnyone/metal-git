@@ -61,3 +61,28 @@ pub fn save_diff_layout(path: &Path, layout: DiffLayout) -> io::Result<()> {
     };
     fs::write(path, value)
 }
+
+const HIDE_VALUE: &str = "hide";
+const SHOW_VALUE: &str = "show";
+
+pub fn whitespace_path() -> PathBuf {
+    gtk::glib::user_config_dir()
+        .join("metal-git")
+        .join("diff-whitespace")
+}
+
+/// Whether diffs leave out changes of whitespace. A missing or unreadable
+/// file means the default, showing them.
+pub fn load_hide_whitespace(path: &Path) -> bool {
+    matches!(
+        fs::read_to_string(path).as_deref().map(str::trim),
+        Ok(HIDE_VALUE)
+    )
+}
+
+pub fn save_hide_whitespace(path: &Path, hide: bool) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, if hide { HIDE_VALUE } else { SHOW_VALUE })
+}

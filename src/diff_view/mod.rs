@@ -7,11 +7,11 @@ mod text;
 mod unified;
 
 use gtk::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff::{self, DiffTarget, Differ, FileDiff, FileStatus, LineKind, Reveal};
+use crate::diff::{self, DiffSettings, DiffTarget, Differ, FileDiff, FileStatus, LineKind, Reveal};
 use split::SplitView;
 use text::RevealFileGap;
 use unified::UnifiedView;
@@ -61,6 +61,7 @@ type SharedContent = Rc<RefCell<Content>>;
 pub struct DiffViewer {
     root: gtk::Box,
     summary: gtk::Label,
+    whitespace_check: gtk::CheckButton,
     layout_dropdown: gtk::DropDown,
     stack: gtk::Stack,
     unified: Rc<UnifiedView>,
@@ -70,6 +71,11 @@ pub struct DiffViewer {
     /// Takes the diffs, and reads the old versions of files, which hold the
     /// unchanged lines that the diff leaves out
     differ: Differ,
+    /// What is shown, taken again when the settings change
+    target: RefCell<Option<DiffTarget>>,
+    /// Set while the check follows the saved setting, so that it does not
+    /// take the diff again
+    syncing_whitespace: Cell<bool>,
 }
 
 impl DiffViewer {
@@ -78,6 +84,14 @@ impl DiffViewer {
             .xalign(0.0)
             .hexpand(true)
             .css_classes(["dim-label"])
+            .build();
+
+        let whitespace_check = gtk::CheckButton::builder()
+            .label("Hide whitespace")
+            .tooltip_text("Leave out changes of whitespace")
+            .active(app_settings::load_hide_whitespace(
+                &app_settings::whitespace_path(),
+            ))
             .build();
 
         let labels: Vec<&str> = LAYOUTS.iter().map(|l| layout_label(*l)).collect();
@@ -93,6 +107,7 @@ impl DiffViewer {
             .margin_bottom(4)
             .build();
         toolbar.append(&summary);
+        toolbar.append(&whitespace_check);
         toolbar.append(&layout_dropdown);
 
         let content = SharedContent::default();
@@ -118,12 +133,22 @@ impl DiffViewer {
         let viewer = Rc::new(DiffViewer {
             root,
             summary,
+            whitespace_check,
             layout_dropdown,
             stack,
             unified,
             split,
             content,
             differ,
+            target: RefCell::new(None),
+            syncing_whitespace: Cell::new(false),
+        });
+
+        let w = Rc::downgrade(&viewer);
+        viewer.whitespace_check.connect_toggled(move |_| {
+            if let Some(viewer) = w.upgrade() {
+                viewer.whitespace_toggled();
+            }
         });
 
         let w = Rc::downgrade(&viewer);
@@ -152,10 +177,49 @@ impl DiffViewer {
         self.root.clone().upcast()
     }
 
-    /// Shows the diff of a target.
+    /// Shows the diff of a target, and takes it again when the settings change.
     pub fn show(&self, target: &DiffTarget) -> Result<(), git2::Error> {
-        self.show_files(self.differ.files(target)?);
+        self.follow_saved_whitespace();
+        self.target.replace(Some(target.clone()));
+        self.refresh()
+    }
+
+    /// Checks "Hide whitespace" as saved, which another window may have
+    /// changed since this one was made.
+    fn follow_saved_whitespace(&self) {
+        let hide = app_settings::load_hide_whitespace(&app_settings::whitespace_path());
+        if self.whitespace_check.is_active() != hide {
+            self.syncing_whitespace.set(true);
+            self.whitespace_check.set_active(hide);
+            self.syncing_whitespace.set(false);
+        }
+    }
+
+    fn settings(&self) -> DiffSettings {
+        DiffSettings {
+            ignore_whitespace: self.whitespace_check.is_active(),
+        }
+    }
+
+    /// Takes the diff of the target shown again.
+    fn refresh(&self) -> Result<(), git2::Error> {
+        let Some(target) = self.target.borrow().clone() else {
+            return Ok(());
+        };
+        self.show_files(self.differ.files(&target, self.settings())?);
         Ok(())
+    }
+
+    fn whitespace_toggled(&self) {
+        if self.syncing_whitespace.get() {
+            return;
+        }
+        let hide = self.whitespace_check.is_active();
+        if let Err(err) = app_settings::save_hide_whitespace(&app_settings::whitespace_path(), hide)
+        {
+            eprintln!("Failed to save whether whitespace is hidden: {}", err);
+        }
+        dialog_when_error!("Failed to show the diff: {}", self.refresh());
     }
 
     /// Shows files, those of a large diff closed at first. See

@@ -1,13 +1,13 @@
 //! Taking the diffs the windows show, all in one place.
 
-use git2::{DiffOptions, Error, Oid, Repository};
+use git2::{Error, Oid, Repository};
 use std::fs;
 use std::path::Path;
 use std::rc::Rc;
 
 use super::commit::{diff_trees, list_commit_diff_files, ListCommitDiffResult};
 use super::context::read_old_content;
-use super::from_git::files_from_diff;
+use super::from_git::{files_from_diff, DiffSettings};
 use super::model::FileDiff;
 use crate::repository_manager::RepositoryManager;
 
@@ -35,36 +35,51 @@ impl Differ {
         Differ { repository_manager }
     }
 
-    /// The files of the diff of a target, with their changed words not marked
-    /// yet. See `FileDiff::emphasize`.
-    pub fn files(&self, target: &DiffTarget) -> Result<Vec<FileDiff>, Error> {
+    /// The files of the diff of a target, taken as the settings say, with their
+    /// changed words not marked yet. See `FileDiff::emphasize`.
+    pub fn files(
+        &self,
+        target: &DiffTarget,
+        settings: DiffSettings,
+    ) -> Result<Vec<FileDiff>, Error> {
         let repo = self.repository_manager.open()?;
-        match target {
+        let mut files = match target {
             DiffTarget::Commit(oid) => {
                 let commit = repo.find_commit(*oid)?;
                 let parent_tree = commit.parent(0)?.tree()?;
                 let tree = commit.tree()?;
-                files_from_diff(&diff_trees(&repo, Some(&parent_tree), Some(&tree))?)
+                files_from_diff(&diff_trees(
+                    &repo,
+                    Some(&parent_tree),
+                    Some(&tree),
+                    settings,
+                )?)?
             }
             DiffTarget::WorkTree(path) => {
+                // A file not tracked yet has no old version, so the settings
+                // do not change it
                 if repo.status_file(Path::new(path))? == git2::Status::WT_NEW {
                     return Ok(vec![untracked_file(&repo, path)]);
                 }
-                let mut options = DiffOptions::new();
+                let mut options = settings.options();
                 options.pathspec(path);
-                files_from_diff(&repo.diff_index_to_workdir(None, Some(&mut options))?)
+                files_from_diff(&repo.diff_index_to_workdir(None, Some(&mut options))?)?
             }
             DiffTarget::Index(path) => {
-                let mut options = DiffOptions::new();
+                let mut options = settings.options();
                 options.pathspec(path);
                 let head_tree = repo.head()?.peel_to_tree()?;
                 files_from_diff(&repo.diff_tree_to_index(
                     Some(&head_tree),
                     None,
                     Some(&mut options),
-                )?)
+                )?)?
             }
+        };
+        for file in &mut files {
+            file.whitespace_ignored = settings.ignore_whitespace;
         }
+        Ok(files)
     }
 
     /// The files a commit changed, in the order of `files` for the commit.

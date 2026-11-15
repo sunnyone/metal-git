@@ -236,11 +236,16 @@ pub fn file_header_segments(file: &FileDiff) -> Vec<(String, Vec<String>)> {
 }
 
 /// A note shown in place of the lines of a file that has none to show: a
-/// binary file, or one whose content did not change, such as a file that was
-/// only renamed.
+/// binary file, one whose whitespace alone changed while whitespace is hidden,
+/// or one whose content did not change, such as a file that was only renamed.
 pub fn body_note(file: &FileDiff) -> Option<&'static str> {
     if file.binary {
         Some("Binary file\n")
+    } else if file.hunks.is_empty()
+        && file.whitespace_ignored
+        && file.status == FileStatus::Modified
+    {
+        Some("Only whitespace changed\n")
     } else if file.hunks.is_empty() {
         Some("No changes in the content\n")
     } else {
