@@ -189,10 +189,13 @@ fn action_for_label(menu: &gio::MenuModel, label: &str) -> String {
 
 #[test]
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window() {
+    crate::gtk_test::run(should_switch_from_the_right_clicked_history_row_and_refresh_the_window_on_gtk_thread);
+}
+
+fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window_on_gtk_thread() {
     // The history scope is saved under the user's config directory
     let config_dir = TempDir::new("history-window-config").unwrap();
     std::env::set_var("XDG_CONFIG_HOME", config_dir.path());
-    gtk::init().unwrap();
     let test_repo = HistoryWindowTestRepo::new();
     let app = gtk::Application::builder()
         .application_id("org.sunnyone.MetalGit.HistoryWindowTest")

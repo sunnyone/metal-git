@@ -6,6 +6,9 @@ mod split;
 mod text;
 mod unified;
 
+#[cfg(test)]
+mod tests;
+
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;

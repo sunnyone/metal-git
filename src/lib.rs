@@ -21,6 +21,8 @@ mod branch_context_menu;
 mod push_dialog;
 
 mod repository_ext;
+#[cfg(test)]
+mod gtk_test;
 mod static_resource;
 
 pub mod app_settings;

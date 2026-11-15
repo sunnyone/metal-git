@@ -473,5 +473,22 @@ impl Folds {
         let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
         let tag_refs: Vec<&str> = fold.head_tags.iter().map(|t| t.as_str()).collect();
         insert(&buffer, &mut start, marker, &tag_refs);
+
+        lay_out_before_drawing(&self.view);
     }
+}
+
+/// Has the view lay out its lines in the layout of the next frame.
+///
+/// Lines that a tag hides or shows keep their old height until the view lays
+/// them out, which it does in an idle callback, when it is allocated, or at
+/// the latest when it is drawn. GTK handles input at the start of a frame, so
+/// a click can change the lines in a frame that then draws them before the
+/// idle callback runs. Laying them out while drawing changes the adjustments,
+/// which invalidates the allocation of the scroll bars, and in a split view of
+/// the other side, before they are drawn, and GTK warns "Trying to snapshot
+/// ... without a current allocation". Allocating the view again lays its lines
+/// out in the layout of the frame instead.
+fn lay_out_before_drawing(view: &gtk::TextView) {
+    view.queue_allocate();
 }
