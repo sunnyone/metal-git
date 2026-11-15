@@ -35,8 +35,8 @@ use std::time::Duration;
 // How long a closing window waits for a running task to clean up
 const TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
-const TOGGLE_BRANCH_TREE_ACTION: &str = "toggle-branch-tree";
-const BRANCH_TREE_WIDTH: i32 = 220;
+const TOGGLE_SIDEBAR_ACTION: &str = "toggle-sidebar";
+const SIDEBAR_WIDTH: i32 = 220;
 
 pub struct HistoryWindow {
     window: gtk::ApplicationWindow,
@@ -56,10 +56,10 @@ pub struct HistoryWindow {
     commit_button: gtk_utils::BadgeButton,
     refresh_button: gtk::Button,
     history_scope: RefCell<HistoryScope>,
-    branch_tree_paned: gtk::Paned,
-    branch_tree_scrolled: gtk::ScrolledWindow,
-    // Where the divider goes back to when the hidden tree is shown again
-    branch_tree_position: Cell<i32>,
+    sidebar_paned: gtk::Paned,
+    sidebar: gtk::Box,
+    // Where the divider goes back to when the hidden sidebar is shown again
+    sidebar_position: Cell<i32>,
     // Items are BoxedAnyObject(Rc<BranchTreeNode>), the rows at the top level
     branch_tree_store: gio::ListStore,
     branch_tree_model: gtk::TreeListModel,
@@ -106,19 +106,19 @@ impl HistoryWindow {
             .build();
         root.append(&button_row);
 
-        let branch_tree_visible = app_settings::load_branch_tree_visible(&app_settings::branch_tree_visible_path());
-        let toggle_branch_tree_action =
-            gio::SimpleAction::new_stateful(TOGGLE_BRANCH_TREE_ACTION, None, &branch_tree_visible.to_variant());
-        window.add_action(&toggle_branch_tree_action);
-        app.set_accels_for_action(&format!("win.{}", TOGGLE_BRANCH_TREE_ACTION), &["F9"]);
+        let sidebar_visible = app_settings::load_sidebar_visible(&app_settings::sidebar_visible_path());
+        let toggle_sidebar_action =
+            gio::SimpleAction::new_stateful(TOGGLE_SIDEBAR_ACTION, None, &sidebar_visible.to_variant());
+        window.add_action(&toggle_sidebar_action);
+        app.set_accels_for_action(&format!("win.{}", TOGGLE_SIDEBAR_ACTION), &["F9"]);
 
         // Icon only, so that it takes as little of the toolbar as a sidebar toggle usually does
-        let branch_tree_toggle = gtk::ToggleButton::builder()
+        let sidebar_toggle = gtk::ToggleButton::builder()
             .icon_name("metal-git-sidebar-symbolic")
-            .tooltip_text("Branch tree (F9)")
-            .action_name(format!("win.{}", TOGGLE_BRANCH_TREE_ACTION))
+            .tooltip_text("Sidebar (F9)")
+            .action_name(format!("win.{}", TOGGLE_SIDEBAR_ACTION))
             .build();
-        button_row.append(&branch_tree_toggle);
+        button_row.append(&sidebar_toggle);
 
         let button_row_spacer = gtk::Box::builder().hexpand(true).build();
         button_row.append(&button_row_spacer);
@@ -174,22 +174,29 @@ impl HistoryWindow {
             .vscrollbar_policy(gtk::PolicyType::Automatic)
             .min_content_width(120)
             .child(&branch_tree_view)
+            .vexpand(true)
             .build();
-        branch_tree_scrolled.set_visible(branch_tree_visible);
 
-        // The tree cannot be dragged closed: it is hidden with the toggle button or F9
-        let branch_tree_paned = gtk::Paned::builder()
+        // What the toggle button and F9 show and hide. The branch tree is its only content for now.
+        let sidebar = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .visible(sidebar_visible)
+            .build();
+        sidebar.append(&branch_tree_scrolled);
+
+        // The sidebar cannot be dragged closed: it is hidden with the toggle button or F9
+        let sidebar_paned = gtk::Paned::builder()
             .orientation(gtk::Orientation::Horizontal)
             .wide_handle(true)
             .build();
-        branch_tree_paned.set_start_child(Some(&branch_tree_scrolled));
-        branch_tree_paned.set_end_child(Some(&main_paned));
-        branch_tree_paned.set_position(BRANCH_TREE_WIDTH);
-        branch_tree_paned.set_resize_start_child(false);
-        branch_tree_paned.set_shrink_start_child(false);
-        branch_tree_paned.set_resize_end_child(true);
-        branch_tree_paned.set_shrink_end_child(false);
-        root.append(&branch_tree_paned);
+        sidebar_paned.set_start_child(Some(&sidebar));
+        sidebar_paned.set_end_child(Some(&main_paned));
+        sidebar_paned.set_position(SIDEBAR_WIDTH);
+        sidebar_paned.set_resize_start_child(false);
+        sidebar_paned.set_shrink_start_child(false);
+        sidebar_paned.set_resize_end_child(true);
+        sidebar_paned.set_shrink_end_child(false);
+        root.append(&sidebar_paned);
 
         // ListView only creates widgets for the visible rows, so startup time
         // does not grow with the number of commits.
@@ -275,9 +282,9 @@ impl HistoryWindow {
                 commit_button,
                 refresh_button,
                 history_scope: RefCell::new(app_settings::load_history_scope(&app_settings::history_scope_path())),
-                branch_tree_paned,
-                branch_tree_scrolled,
-                branch_tree_position: Cell::new(BRANCH_TREE_WIDTH),
+                sidebar_paned,
+                sidebar,
+                sidebar_position: Cell::new(SIDEBAR_WIDTH),
                 branch_tree_store,
                 branch_tree_model,
                 branch_tree_selection,
@@ -310,11 +317,11 @@ impl HistoryWindow {
         history_window.setup_branch_tree();
 
         let w = Rc::downgrade(&history_window);
-        toggle_branch_tree_action.connect_change_state(move |action, state| {
+        toggle_sidebar_action.connect_change_state(move |action, state| {
             let Some(visible) = state.and_then(|state| state.get::<bool>()) else { return };
             action.set_state(&visible.to_variant());
             if let Some(w) = w.upgrade() {
-                w.set_branch_tree_visible(visible);
+                w.set_sidebar_visible(visible);
             }
         });
 
@@ -551,19 +558,19 @@ impl HistoryWindow {
         self.set_history_scope(HistoryScope::AllBranches);
     }
 
-    fn set_branch_tree_visible(&self, visible: bool) {
-        if visible == self.branch_tree_scrolled.is_visible() {
+    fn set_sidebar_visible(&self, visible: bool) {
+        if visible == self.sidebar.is_visible() {
             return;
         }
         if visible {
-            self.branch_tree_scrolled.set_visible(true);
-            self.branch_tree_paned.set_position(self.branch_tree_position.get());
+            self.sidebar.set_visible(true);
+            self.sidebar_paned.set_position(self.sidebar_position.get());
         } else {
-            self.branch_tree_position.set(self.branch_tree_paned.position());
-            self.branch_tree_scrolled.set_visible(false);
+            self.sidebar_position.set(self.sidebar_paned.position());
+            self.sidebar.set_visible(false);
         }
-        if let Err(err) = app_settings::save_branch_tree_visible(&app_settings::branch_tree_visible_path(), visible) {
-            eprintln!("Failed to save whether the branch tree is shown: {}", err);
+        if let Err(err) = app_settings::save_sidebar_visible(&app_settings::sidebar_visible_path(), visible) {
+            eprintln!("Failed to save whether the sidebar is shown: {}", err);
         }
     }
 

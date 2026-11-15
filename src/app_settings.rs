@@ -94,22 +94,22 @@ pub fn save_hide_whitespace(path: &Path, hide: bool) -> io::Result<()> {
 const VISIBLE_VALUE: &str = "visible";
 const HIDDEN_VALUE: &str = "hidden";
 
-pub fn branch_tree_visible_path() -> PathBuf {
+pub fn sidebar_visible_path() -> PathBuf {
     gtk::glib::user_config_dir()
         .join("metal-git")
-        .join("branch-tree-visible")
+        .join("sidebar-visible")
 }
 
-/// Whether the history window shows the branch tree. A missing or unreadable
+/// Whether the history window shows the sidebar. A missing or unreadable
 /// file means the default, showing it.
-pub fn load_branch_tree_visible(path: &Path) -> bool {
+pub fn load_sidebar_visible(path: &Path) -> bool {
     !matches!(
         fs::read_to_string(path).as_deref().map(str::trim),
         Ok(HIDDEN_VALUE)
     )
 }
 
-pub fn save_branch_tree_visible(path: &Path, visible: bool) -> io::Result<()> {
+pub fn save_sidebar_visible(path: &Path, visible: bool) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

@@ -2,8 +2,8 @@ extern crate metal_git;
 extern crate tempdir;
 
 use metal_git::app_settings::{
-    load_branch_tree_visible, load_diff_layout, load_hide_whitespace, load_history_scope,
-    save_branch_tree_visible, save_diff_layout, save_hide_whitespace, save_history_scope,
+    load_sidebar_visible, load_diff_layout, load_hide_whitespace, load_history_scope,
+    save_sidebar_visible, save_diff_layout, save_hide_whitespace, save_history_scope,
     DiffLayout,
 };
 use metal_git::railway::HistoryScope;
@@ -59,15 +59,15 @@ pub fn scope_of_one_reference_writes_nothing_when_nothing_was_saved() {
 }
 
 #[test]
-pub fn branch_tree_is_visible_unless_saved_as_hidden() {
+pub fn sidebar_is_visible_unless_saved_as_hidden() {
     let temp_dir = TempDir::new("app-settings").unwrap();
-    let path = temp_dir.path().join("metal-git").join("branch-tree-visible");
+    let path = temp_dir.path().join("metal-git").join("sidebar-visible");
 
-    assert!(load_branch_tree_visible(&path));
-    save_branch_tree_visible(&path, false).unwrap();
-    assert!(!load_branch_tree_visible(&path));
-    save_branch_tree_visible(&path, true).unwrap();
-    assert!(load_branch_tree_visible(&path));
+    assert!(load_sidebar_visible(&path));
+    save_sidebar_visible(&path, false).unwrap();
+    assert!(!load_sidebar_visible(&path));
+    save_sidebar_visible(&path, true).unwrap();
+    assert!(load_sidebar_visible(&path));
 }
 
 #[test]
