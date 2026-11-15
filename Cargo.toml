@@ -1,6 +1,6 @@
 [package]
 name = "metal-git"
-version = "0.0.1"
+version = "0.4.0"
 authors = ["Yoichi Imai <sunnyone41@gmail.com>"]
 edition = "2021"
 description = "GUI Git frontend written in Rust with GTK 4"
