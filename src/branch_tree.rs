@@ -191,7 +191,9 @@ impl Folder {
         }
     }
 
-    /// Folders come before the references, each sorted by name.
+    /// The references come before the folders, each sorted by name. A name
+    /// without a folder, like `main`, is usually a long-lived branch, while
+    /// work branches go into folders like `feature/`.
     fn into_nodes(self, prefix: &str, leaf_kind: BranchTreeKind, order: SortOrder) -> Vec<BranchTreeNode> {
         let mut folders = self
             .folders
@@ -207,8 +209,8 @@ impl Folder {
             .collect::<Vec<_>>();
         sort_nodes(&mut folders, order);
         sort_nodes(&mut leaves, order);
-        folders.extend(leaves);
-        folders
+        leaves.extend(folders);
+        leaves
     }
 
     /// The first part of a remote branch is the remote name. Each remote keeps
