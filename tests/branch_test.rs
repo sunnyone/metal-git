@@ -13,8 +13,8 @@ use std::path::Path;
 
 use git2::{BranchType, ErrorCode, Repository, WorktreeAddOptions};
 use metal_git::branch::{
-    create_tracking_branch_and_switch, find_branch_candidates, switch_local_branch,
-    BranchCandidate, BranchKind,
+    create_tracking_branch_and_switch, find_branch_candidates, head_label, recent_branches,
+    switch_local_branch, BranchCandidate, BranchKind,
 };
 
 use crate::util::branch_test_repo::BranchTestRepo;
@@ -546,4 +546,80 @@ fn should_reject_second_remote_when_remote_branches_map_to_same_local_name() {
     assert!(result.is_err());
     assert_eq!("origin/feature", test_repo.upstream_name("feature"));
     assert_eq!("feature", test_repo.head_shorthand());
+}
+
+#[test]
+fn head_label_should_name_the_current_branch() {
+    let test_repo = TestRepo::flat_two();
+    let repo = test_repo.repository_manager().open().unwrap();
+
+    assert_eq!("master", head_label(&repo).unwrap());
+}
+
+#[test]
+fn head_label_should_name_the_commit_when_head_is_detached() {
+    let test_repo = TestRepo::flat_two();
+    let tip = test_repo.tip_oid("master");
+    let repo = test_repo.repository_manager().open().unwrap();
+    repo.set_head_detached(tip).unwrap();
+
+    let label = head_label(&repo).unwrap();
+
+    let short_id = label.strip_prefix("HEAD detached at ").unwrap();
+    assert!(short_id.len() >= 7);
+    assert!(tip.to_string().starts_with(short_id));
+}
+
+#[test]
+fn head_label_should_name_a_branch_without_commits() {
+    let test_repo = TestRepo::empty();
+    let repo = test_repo.repository_manager().open().unwrap();
+    let target = repo.find_reference("HEAD").unwrap().symbolic_target().unwrap().unwrap().to_owned();
+
+    assert_eq!(target.strip_prefix("refs/heads/").unwrap(), head_label(&repo).unwrap());
+}
+
+#[test]
+fn switching_should_record_the_checkout_like_git() {
+    let test_repo = TestRepo::flat_two();
+    test_repo.create_local_branch("feature", test_repo.tip_oid("master"));
+    let repo = test_repo.repository_manager().open().unwrap();
+
+    switch_local_branch(&repo, "feature").unwrap();
+
+    let reflog = repo.reflog("HEAD").unwrap();
+    assert_eq!(Some("checkout: moving from master to feature"), reflog.get(0).unwrap().message().unwrap());
+}
+
+fn switch_in_turn(test_repo: &TestRepo, names: &[&str]) -> Repository {
+    let tip = test_repo.tip_oid("master");
+    for name in ["a", "b", "c"] {
+        test_repo.create_local_branch(name, tip);
+    }
+    let repo = test_repo.repository_manager().open().unwrap();
+    for name in names {
+        switch_local_branch(&repo, name).unwrap();
+    }
+    repo
+}
+
+#[test]
+fn recent_branches_should_list_the_branches_left_latest_first() {
+    let test_repo = TestRepo::flat_two();
+    let repo = switch_in_turn(&test_repo, &["a", "b", "c", "a"]);
+
+    // a is the current branch, so it is left out though it was left before
+    assert_eq!(vec!["c", "b", "master"], recent_branches(&repo, 5).unwrap());
+    assert_eq!(vec!["c", "b"], recent_branches(&repo, 2).unwrap());
+}
+
+#[test]
+fn recent_branches_should_leave_out_deleted_branches_and_detached_heads() {
+    let test_repo = TestRepo::flat_two();
+    let repo = switch_in_turn(&test_repo, &["a", "b"]);
+    repo.set_head_detached(test_repo.tip_oid("master")).unwrap();
+    switch_local_branch(&repo, "c").unwrap();
+    repo.find_branch("a", BranchType::Local).unwrap().delete().unwrap();
+
+    assert_eq!(vec!["b", "master"], recent_branches(&repo, 5).unwrap());
 }

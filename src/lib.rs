@@ -19,6 +19,7 @@ mod status_bar;
 pub mod diff;
 mod diff_view;
 mod branch_context_menu;
+mod branch_menu;
 mod push_dialog;
 
 mod repository_ext;

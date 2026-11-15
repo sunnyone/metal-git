@@ -2,6 +2,7 @@ use crate::app_settings;
 use crate::background_task::TaskRunner;
 use crate::branch::{BranchCandidate, BranchKind};
 use crate::branch_context_menu::BranchContextMenu;
+use crate::branch_menu::BranchMenu;
 use crate::branch_tree::{self, BranchTreeKind, BranchTreeNode};
 use crate::commit_diff_panel::CommitDiffPanel;
 use crate::fetch_operation::FetchOperation;
@@ -72,6 +73,7 @@ pub struct HistoryWindow {
     history_store: gio::ListStore,
     history_selection: gtk::SingleSelection,
     branch_context_menu: Rc<BranchContextMenu>,
+    branch_menu: Rc<BranchMenu>,
     commit_textview: gtk::TextView,
     graph: Rc<RefCell<Rc<railway::RailwayGraph>>>,
     current_index: Rc<RefCell<Option<usize>>>,
@@ -253,18 +255,31 @@ impl HistoryWindow {
 
         let task_runner = TaskRunner::new();
         let history_window = Rc::new_cyclic(|weak: &Weak<HistoryWindow>| {
-            let weak = weak.clone();
+            let context_menu_weak = weak.clone();
             let busy_task_runner = task_runner.clone();
             let branch_context_menu = BranchContextMenu::new(
                 &history_panel,
                 repository_manager.clone(),
                 move || busy_task_runner.is_running(),
                 move |candidate| {
-                    if let Some(history_window) = weak.upgrade() {
+                    if let Some(history_window) = context_menu_weak.upgrade() {
                         history_window.switch_branch(candidate);
                     }
                 },
             );
+
+            let branch_menu_weak = weak.clone();
+            let busy_task_runner = task_runner.clone();
+            let branch_menu = BranchMenu::new(
+                repository_manager.clone(),
+                move || busy_task_runner.is_running(),
+                move |candidate| {
+                    if let Some(history_window) = branch_menu_weak.upgrade() {
+                        history_window.switch_branch(candidate);
+                    }
+                },
+            );
+            button_row.insert_child_after(&branch_menu.widget(), Some(&sidebar_toggle));
 
             HistoryWindow {
                 window,
@@ -294,6 +309,7 @@ impl HistoryWindow {
                 history_store,
                 history_selection,
                 branch_context_menu,
+                branch_menu,
                 commit_textview,
                 graph: Rc::new(RefCell::new(Rc::new(railway::RailwayGraph::default()))),
                 current_index: Rc::new(RefCell::new(None)),
@@ -664,6 +680,7 @@ impl HistoryWindow {
     pub fn refresh(&self) {
         dialog_when_error!("Failed to load repository: {:?}", self.load_title());
         dialog_when_error!("Failed to load branches: {:?}", self.load_branch_tree());
+        self.branch_menu.update();
         self.update_pull_button();
         self.update_push_button();
         self.update_commit_button();
@@ -990,6 +1007,22 @@ fn install_history_list_css() {
 
         .branch-tree-head {
             font-weight: bold;
+        }
+
+        .branch-menu-current {
+            font-weight: bold;
+            padding: 6px 10px;
+        }
+
+        .branch-menu-header {
+            font-weight: bold;
+            font-size: smaller;
+            opacity: 0.7;
+            padding: 6px 10px 2px;
+        }
+
+        .branch-menu-row {
+            padding: 4px 10px;
         }
 
         .branch-tree-header {
