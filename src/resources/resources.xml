@@ -8,5 +8,6 @@
     <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-fetch-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-pull-symbolic.svg</file>
     <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-push-symbolic.svg</file>
+    <file preprocess="xml-stripblanks">icons/scalable/actions/metal-git-sidebar-symbolic.svg</file>
   </gresource>
 </gresources>
