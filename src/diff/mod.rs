@@ -1,16 +1,17 @@
 //! Diffs as data, apart from how they are drawn: what changed in each file,
 //! read from the repository and from git2, with the changed words marked.
+//! The windows take them through a `Differ`.
 
 mod commit;
 mod context;
+mod differ;
 mod emphasis;
 mod from_git;
 mod model;
 
-pub use commit::{
-    diff_trees, list_commit_diff_files, ListCommitDiffFileEntry, ListCommitDiffResult,
-};
-pub use context::{old_content_reader, Gap, OldContentReader, Reveal};
+pub use commit::{diff_trees, ListCommitDiffFileEntry, ListCommitDiffResult};
+pub use context::{Gap, Reveal};
+pub use differ::{DiffTarget, Differ};
 pub use emphasis::{changed_ranges, emphasize_changes};
 pub use from_git::{file_from_patch, files_from_diff, status_of};
 pub use model::{

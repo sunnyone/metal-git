@@ -3,7 +3,7 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::diff::{self, ListCommitDiffFileEntry, ListCommitDiffResult};
+use crate::diff::{DiffTarget, Differ, ListCommitDiffFileEntry, ListCommitDiffResult};
 use crate::diff_view::{self, DiffViewer};
 use crate::repository_manager::RepositoryManager;
 
@@ -11,7 +11,7 @@ pub struct CommitDiffPanel {
     paned: gtk::Paned,
     diff_list_box: gtk::ListBox,
     diff_viewer: Rc<DiffViewer>,
-    repository_manager: Rc<RepositoryManager>,
+    differ: Differ,
     current_list_result: RefCell<Option<Rc<ListCommitDiffResult>>>,
 }
 
@@ -31,14 +31,15 @@ impl CommitDiffPanel {
             .build();
         paned.set_start_child(Some(&list_scrolled));
 
-        let diff_viewer = DiffViewer::new(diff::old_content_reader(&repository_manager));
+        let differ = repository_manager.differ();
+        let diff_viewer = DiffViewer::new(differ.clone());
         paned.set_end_child(Some(&diff_viewer.widget()));
 
         let commit_diff_panel = Rc::new(CommitDiffPanel {
             paned,
             diff_list_box,
             diff_viewer,
-            repository_manager,
+            differ,
             current_list_result: RefCell::new(None),
         });
 
@@ -51,8 +52,7 @@ impl CommitDiffPanel {
     }
 
     pub fn update_commit(&self, oid: Oid) -> Result<(), Error> {
-        let result =
-            diff::list_commit_diff_files(self.repository_manager.as_ref(), oid)?;
+        let result = self.differ.commit_file_list(oid)?;
 
         clear_list_box(&self.diff_list_box);
 
@@ -99,12 +99,8 @@ impl CommitDiffPanel {
             return Ok(());
         };
 
-        let repo = self.repository_manager.open()?;
-        let parent_tree = repo.find_commit(list_result.parent_oid)?.tree()?;
-        let current_tree = repo.find_commit(list_result.current_oid)?.tree()?;
-        let diff = diff::diff_trees(&repo, Some(&parent_tree), Some(&current_tree))?;
-        self.diff_viewer.show_files(diff::files_from_diff(&diff)?);
-        Ok(())
+        self.diff_viewer
+            .show(&DiffTarget::Commit(list_result.current_oid))
     }
 }
 

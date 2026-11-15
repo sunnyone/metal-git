@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::app_settings::{self, DiffLayout};
-use crate::diff::{self, FileDiff, FileStatus, LineKind, OldContentReader, Reveal};
+use crate::diff::{self, DiffTarget, Differ, FileDiff, FileStatus, LineKind, Reveal};
 use split::SplitView;
 use text::RevealFileGap;
 use unified::UnifiedView;
@@ -67,13 +67,13 @@ pub struct DiffViewer {
     split: Rc<SplitView>,
     /// Kept to show again in the other layout
     content: SharedContent,
-    /// Reads the old versions of files, which hold the unchanged lines that
-    /// the diff leaves out
-    read_old_content: OldContentReader,
+    /// Takes the diffs, and reads the old versions of files, which hold the
+    /// unchanged lines that the diff leaves out
+    differ: Differ,
 }
 
 impl DiffViewer {
-    pub fn new(read_old_content: OldContentReader) -> Rc<DiffViewer> {
+    pub fn new(differ: Differ) -> Rc<DiffViewer> {
         let summary = gtk::Label::builder()
             .xalign(0.0)
             .hexpand(true)
@@ -123,7 +123,7 @@ impl DiffViewer {
             unified,
             split,
             content,
-            read_old_content,
+            differ,
         });
 
         let w = Rc::downgrade(&viewer);
@@ -152,9 +152,15 @@ impl DiffViewer {
         self.root.clone().upcast()
     }
 
+    /// Shows the diff of a target.
+    pub fn show(&self, target: &DiffTarget) -> Result<(), git2::Error> {
+        self.show_files(self.differ.files(target)?);
+        Ok(())
+    }
+
     /// Shows files, those of a large diff closed at first. See
     /// `diff::initially_open`.
-    pub fn show_files(&self, files: Vec<FileDiff>) {
+    fn show_files(&self, files: Vec<FileDiff>) {
         self.summary.set_text(&summary_text(&files));
         let open = diff::initially_open(&files);
         self.content.replace(Content { files, open });
@@ -184,7 +190,7 @@ impl DiffViewer {
                 return Ok(());
             };
             if file.old_content.is_none() {
-                file.old_content = Some((self.read_old_content)(file)?);
+                file.old_content = Some(self.differ.old_content(file)?);
             }
             if !file.reveal(before_hunk, how) {
                 return Ok(());

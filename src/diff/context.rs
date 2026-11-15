@@ -3,10 +3,8 @@
 
 use git2::{Error, Repository};
 use std::ops::Range;
-use std::rc::Rc;
 
 use super::model::{DiffHunk, DiffLine, FileDiff, LineKind};
-use crate::repository_manager::RepositoryManager;
 
 /// The unchanged lines git shows around each change by default. A last hunk
 /// that ends with fewer has reached the end of the file.
@@ -235,16 +233,7 @@ impl FileDiff {
 }
 
 /// Reads the lines of the old version of a file, for `FileDiff::reveal`.
-pub type OldContentReader = Rc<dyn Fn(&FileDiff) -> Result<Vec<String>, Error>>;
-
-/// An `OldContentReader` that reads from the repository.
-pub fn old_content_reader(repository_manager: &Rc<RepositoryManager>) -> OldContentReader {
-    let repository_manager = repository_manager.clone();
-    Rc::new(move |file| read_old_content(&repository_manager.open()?, file))
-}
-
-/// Reads the lines of the old version of a file, for `FileDiff::reveal`.
-fn read_old_content(repo: &Repository, file: &FileDiff) -> Result<Vec<String>, Error> {
+pub(super) fn read_old_content(repo: &Repository, file: &FileDiff) -> Result<Vec<String>, Error> {
     let Some(id) = file.old_id else {
         return Ok(Vec::new());
     };
