@@ -252,6 +252,7 @@ fn history_window_scenarios() {
     branch_tree_should_show_nothing_when_the_reference_is_gone(&app);
     branch_tree_double_click_should_check_out_a_remote_branch(&app);
     sidebar_should_be_hidden_and_shown_by_the_toggle_action(&app);
+    branch_tree_filter_should_keep_the_history_and_the_collapsed_folders(&app);
 }
 
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window(app: &gtk::Application) {
@@ -490,4 +491,43 @@ fn sidebar_should_be_hidden_and_shown_by_the_toggle_action(app: &gtk::Applicatio
     let next_window = open_history_window(app, &test_repo);
     assert!(!next_window.sidebar.is_visible());
     WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+}
+
+fn branch_tree_filter_should_keep_the_history_and_the_collapsed_folders(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+    select_branch_tree_row(&history_window, "feature_test");
+    let history_length = history_window.graph.borrow().len();
+    let origin = branch_tree_position(&history_window, "origin/");
+    history_window.branch_tree_model.row(origin).unwrap().set_expanded(false);
+
+    history_window.branch_filter_entry.set_text("GROUP");
+
+    // Only the matching rows show, with their folders open
+    assert_eq!(vec!["Remote", "  origin/", "    group_feature"], branch_tree_labels(&history_window));
+    // The history stays on the branch whose row is filtered out
+    assert_eq!(
+        HistoryScope::Ref("refs/heads/feature_test".to_owned()),
+        *history_window.history_scope.borrow()
+    );
+    assert!(history_window.branch_tree_selection.selected_item().is_none());
+    assert_eq!(history_length, history_window.graph.borrow().len());
+
+    // A refresh filters the references read again
+    history_window.refresh();
+    assert_eq!(vec!["Remote", "  origin/", "    group_feature"], branch_tree_labels(&history_window));
+
+    history_window.branch_filter_entry.set_text("nothing-like-this");
+    assert!(branch_tree_labels(&history_window).is_empty());
+    assert!(history_window.branch_tree_empty_label.is_visible());
+    assert!(!history_window.branch_tree_scrolled.is_visible());
+
+    history_window.branch_filter_entry.set_text("");
+
+    // The folder collapsed before the filter is collapsed again
+    let labels = branch_tree_labels(&history_window);
+    assert!(labels.contains(&"  origin/".to_owned()));
+    assert!(!labels.contains(&"    group_feature".to_owned()));
+    assert!(!history_window.branch_tree_empty_label.is_visible());
+    assert_eq!("feature_test", selected_branch_tree_label(&history_window));
 }

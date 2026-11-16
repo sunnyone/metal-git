@@ -65,6 +65,13 @@ pub struct HistoryWindow {
     branch_tree_store: gio::ListStore,
     // The references as last read, which the rows are made from
     branch_tree_nodes: RefCell<Vec<BranchTreeNode>>,
+    branch_filter_entry: gtk::SearchEntry,
+    branch_tree_scrolled: gtk::ScrolledWindow,
+    branch_tree_empty_label: gtk::Label,
+    // Whether the rows are filtered now. Every folder is open then, and the
+    // folders collapsed before are kept here for the rows without the filter.
+    branch_tree_filtered: Cell<bool>,
+    collapsed_folders: RefCell<HashSet<HistoryScope>>,
     branch_tree_model: gtk::TreeListModel,
     branch_tree_selection: gtk::SingleSelection,
     branch_tree_view: gtk::ListView,
@@ -181,12 +188,32 @@ impl HistoryWindow {
             .vexpand(true)
             .build();
 
-        // What the toggle button and F9 show and hide. The branch tree is its only content for now.
+        let branch_filter_entry = gtk::SearchEntry::builder()
+            .placeholder_text("Filter branches")
+            .build();
+        let branch_filter_row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .valign(gtk::Align::Center)
+            .build();
+        branch_filter_row.add_css_class("branch-filter");
+        branch_filter_row.append(&branch_filter_entry);
+
+        let branch_tree_empty_label = gtk::Label::builder()
+            .label("No matching branches")
+            .valign(gtk::Align::Start)
+            .vexpand(true)
+            .visible(false)
+            .build();
+        branch_tree_empty_label.add_css_class("branch-tree-empty");
+
+        // What the toggle button and F9 show and hide
         let sidebar = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .visible(sidebar_visible)
             .build();
+        sidebar.append(&branch_filter_row);
         sidebar.append(&branch_tree_scrolled);
+        sidebar.append(&branch_tree_empty_label);
 
         // The sidebar cannot be dragged closed: it is hidden with the toggle button or F9
         let sidebar_paned = gtk::Paned::builder()
@@ -228,6 +255,11 @@ impl HistoryWindow {
             .build();
         history_panel.append(&history_header);
         history_panel.append(&history_scrolled);
+
+        // The top of the sidebar and of the history line up
+        let header_size_group = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+        header_size_group.add_widget(&branch_filter_row);
+        header_size_group.add_widget(&history_header);
         main_paned.set_start_child(Some(&history_panel));
 
         let commit_notebook = gtk::Notebook::new();
@@ -304,6 +336,11 @@ impl HistoryWindow {
                 sidebar_position: Cell::new(SIDEBAR_WIDTH),
                 branch_tree_store,
                 branch_tree_nodes: RefCell::new(Vec::new()),
+                branch_filter_entry,
+                branch_tree_scrolled,
+                branch_tree_empty_label,
+                branch_tree_filtered: Cell::new(false),
+                collapsed_folders: RefCell::new(HashSet::new()),
                 branch_tree_model,
                 branch_tree_selection,
                 branch_tree_view,
@@ -468,7 +505,7 @@ impl HistoryWindow {
                 check.set_opacity(if node.is_head { 1.0 } else { 0.0 });
             }
             if let Some(label) = content.last_child().and_downcast::<gtk::Label>() {
-                label.set_label(&node.label);
+                label.set_markup(&branch_tree_markup(&node));
                 label.set_css_classes(match node.kind {
                     BranchTreeKind::Header => &["branch-tree-header"],
                     _ if node.is_head => &["branch-tree-head"],
@@ -483,6 +520,14 @@ impl HistoryWindow {
             }
         });
         self.branch_tree_view.set_factory(Some(&factory));
+
+        // Filtering only redoes the rows, so it follows each key without a delay
+        let w = Rc::downgrade(self);
+        self.branch_filter_entry.connect_changed(move |_| {
+            if let Some(w) = w.upgrade() {
+                w.show_branch_tree();
+            }
+        });
 
         let w = Rc::downgrade(self);
         self.branch_tree_selection.connect_selected_notify(move |selection| {
@@ -512,18 +557,32 @@ impl HistoryWindow {
         Ok(())
     }
 
-    /// Rebuilds the rows from the references last read, keeping the folders
-    /// that were collapsed, and selects the row of the history scope again. A
-    /// scope whose reference is gone keeps no row selected, and its history
-    /// shows nothing.
+    /// Rebuilds the rows from the references last read, filtered by the text
+    /// of the filter entry, and selects the row of the history scope again.
+    /// Without a filter the folders that were collapsed stay collapsed; with
+    /// one every folder is open. The history is left as it is: a scope whose
+    /// row is filtered out or whose reference is gone keeps no row selected.
     fn show_branch_tree(&self) {
-        let nodes = self.branch_tree_nodes.borrow().clone();
+        if !self.branch_tree_filtered.get() {
+            let collapsed = (0..self.branch_tree_model.n_items())
+                .filter_map(|position| self.branch_tree_model.row(position))
+                .filter(|row| row.is_expandable() && !row.is_expanded())
+                .filter_map(|row| branch_tree_node(&row).map(|node| node.scope.clone()))
+                .collect::<HashSet<_>>();
+            self.collapsed_folders.replace(collapsed);
+        }
 
-        let collapsed = (0..self.branch_tree_model.n_items())
-            .filter_map(|position| self.branch_tree_model.row(position))
-            .filter(|row| row.is_expandable() && !row.is_expanded())
-            .filter_map(|row| branch_tree_node(&row).map(|node| node.scope.clone()))
-            .collect::<HashSet<_>>();
+        let query = self.branch_filter_entry.text();
+        let filtered = !query.is_empty();
+        self.branch_tree_filtered.set(filtered);
+        let (nodes, collapsed) = if filtered {
+            (branch_tree::filter_branch_tree(&self.branch_tree_nodes.borrow(), &query), HashSet::new())
+        } else {
+            (self.branch_tree_nodes.borrow().clone(), self.collapsed_folders.borrow().clone())
+        };
+        let nothing_matches = filtered && nodes.is_empty();
+        self.branch_tree_empty_label.set_visible(nothing_matches);
+        self.branch_tree_scrolled.set_visible(!nothing_matches);
 
         self.updating_branch_tree.set(true);
         let items = nodes
@@ -1030,6 +1089,16 @@ fn install_history_list_css() {
             padding: 4px 10px;
         }
 
+        .branch-filter {
+            padding: 4px 6px;
+            border-bottom: 1px solid alpha(currentColor, 0.18);
+        }
+
+        .branch-tree-empty {
+            padding: 12px;
+            opacity: 0.7;
+        }
+
         .branch-tree-header {
             font-weight: bold;
             opacity: 0.7;
@@ -1206,6 +1275,20 @@ impl HistoryRow {
         }
         imp.station.replace(station);
         imp.graph.queue_draw();
+    }
+}
+
+/// The label of a row, with the part a filter matched in bold.
+fn branch_tree_markup(node: &BranchTreeNode) -> String {
+    let escape = |text: &str| gtk::glib::markup_escape_text(text).to_string();
+    match &node.highlight {
+        Some(range) => format!(
+            "{}<b>{}</b>{}",
+            escape(&node.label[..range.start]),
+            escape(&node.label[range.clone()]),
+            escape(&node.label[range.end..])
+        ),
+        None => escape(&node.label),
     }
 }
 

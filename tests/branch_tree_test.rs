@@ -5,7 +5,7 @@ extern crate tempdir;
 mod util;
 use crate::util::branch_test_repo::BranchTestRepo;
 use crate::util::test_repo::TestRepo;
-use metal_git::branch_tree::{collect_branch_tree, natural_cmp, BranchTreeKind, BranchTreeNode};
+use metal_git::branch_tree::{collect_branch_tree, filter_branch_tree, natural_cmp, BranchTreeKind, BranchTreeNode};
 use metal_git::railway::HistoryScope;
 use std::cmp::Ordering;
 
@@ -154,4 +154,89 @@ pub fn natural_order_ignores_case_and_compares_numbers_by_value() {
     assert_eq!(Ordering::Less, natural_cmp("Alpha", "beta"));
     assert_eq!(Ordering::Greater, natural_cmp("v0.10.0", "v0.9.1"));
     assert_eq!(Ordering::Less, natural_cmp("v1", "v1.0"));
+}
+
+/// Each row as in `labels`, with the highlighted part of its label in brackets.
+fn highlighted_labels(nodes: &[BranchTreeNode]) -> Vec<String> {
+    fn walk(nodes: &[BranchTreeNode], depth: usize, out: &mut Vec<String>) {
+        for node in nodes {
+            let label = match &node.highlight {
+                Some(range) => format!(
+                    "{}[{}]{}",
+                    &node.label[..range.start],
+                    &node.label[range.clone()],
+                    &node.label[range.end..]
+                ),
+                None => node.label.clone(),
+            };
+            out.push(format!("{}{}", "  ".repeat(depth), label));
+            walk(&node.children, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(nodes, 0, &mut out);
+    out
+}
+
+fn filter_test_tree() -> Vec<BranchTreeNode> {
+    let test_repo = TestRepo::branches_with_distinct_files();
+    let master = test_repo.tip_oid("master");
+    for name in ["Issue-2", "issue-10", "topic/login", "topic/diff", "user/me/fix/login"] {
+        test_repo.create_local_branch(name, master);
+    }
+    test_repo.create_remote_branch("origin/topic/login", master);
+    test_repo.create_remote_branch("origin/main", master);
+    tag(&test_repo, "v1.0");
+    collect_branch_tree(&test_repo.repository_manager().open().unwrap()).unwrap()
+}
+
+#[test]
+pub fn filter_keeps_the_matching_rows_under_their_folders_and_headers() {
+    let nodes = filter_branch_tree(&filter_test_tree(), "login");
+
+    // All Branches, Current Branch and Tags have nothing to show
+    assert_eq!(
+        vec![
+            "Local",
+            "  topic/",
+            "    [login]",
+            "  user/me/fix/",
+            "    [login]",
+            "Remote",
+            "  origin/",
+            "    topic/",
+            "      [login]",
+        ],
+        highlighted_labels(&nodes)
+    );
+}
+
+#[test]
+pub fn filter_matches_names_with_their_folders() {
+    let tree = filter_test_tree();
+
+    // A matching folder keeps every row in it
+    assert_eq!(
+        vec!["Local", "  [topic]/", "    diff", "    login", "Remote", "  origin/", "    [topic]/", "      login"],
+        highlighted_labels(&filter_branch_tree(&tree, "topic"))
+    );
+    // A folder shared by other rows is highlighted only when its own name
+    // matches, so a match across a folder highlights the part in the row
+    assert_eq!(
+        vec!["Local", "  topic/", "    [lo]gin", "Remote", "  origin/", "    topic/", "      [lo]gin"],
+        highlighted_labels(&filter_branch_tree(&tree, "c/lo"))
+    );
+    assert_eq!(vec!["Remote", "  origin/", "    [m]ain"], highlighted_labels(&filter_branch_tree(&tree, "origin/m")));
+}
+
+#[test]
+pub fn filter_ignores_case_and_can_match_nothing() {
+    let tree = filter_test_tree();
+
+    assert_eq!(
+        vec!["Local", "  [Issue]-2", "  [issue]-10"],
+        highlighted_labels(&filter_branch_tree(&tree, "ISSUE"))
+    );
+    assert_eq!(vec!["Tags", "  [v1].0"], highlighted_labels(&filter_branch_tree(&tree, "V1")));
+    assert!(filter_branch_tree(&tree, "nothing-like-this").is_empty());
 }
