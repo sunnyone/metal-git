@@ -249,7 +249,7 @@ fn history_window_scenarios() {
     should_switch_from_the_right_clicked_history_row_and_refresh_the_window(&app);
     branch_tree_should_list_the_references_in_folders(&app);
     branch_tree_selection_should_choose_what_the_history_shows(&app);
-    branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(&app);
+    branch_tree_should_show_nothing_when_the_reference_is_gone(&app);
     branch_tree_double_click_should_check_out_a_remote_branch(&app);
     sidebar_should_be_hidden_and_shown_by_the_toggle_action(&app);
 }
@@ -426,7 +426,7 @@ fn branch_tree_selection_should_choose_what_the_history_shows(app: &gtk::Applica
     assert_eq!(HistoryScope::AllBranches, *history_window.history_scope.borrow());
 }
 
-fn branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(app: &gtk::Application) {
+fn branch_tree_should_show_nothing_when_the_reference_is_gone(app: &gtk::Application) {
     let test_repo = HistoryWindowTestRepo::new();
     let history_window = open_history_window(app, &test_repo);
     select_branch_tree_row(&history_window, "feature_test");
@@ -441,9 +441,12 @@ fn branch_tree_should_fall_back_to_all_branches_when_the_reference_is_gone(app: 
         .unwrap();
     history_window.refresh();
 
-    assert_eq!(HistoryScope::AllBranches, *history_window.history_scope.borrow());
-    assert_eq!("All Branches", selected_branch_tree_label(&history_window));
-    assert!(graph_contains(&history_window, test_repo.tip));
+    assert_eq!(
+        HistoryScope::Ref("refs/heads/feature_test".to_owned()),
+        *history_window.history_scope.borrow()
+    );
+    assert!(history_window.branch_tree_selection.selected_item().is_none());
+    assert_eq!(0, history_window.graph.borrow().len());
 }
 
 fn branch_tree_double_click_should_check_out_a_remote_branch(app: &gtk::Application) {

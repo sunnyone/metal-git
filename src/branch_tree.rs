@@ -103,12 +103,6 @@ pub fn collect_branch_tree(repo: &Repository) -> Result<Vec<BranchTreeNode>, Err
     Ok(nodes)
 }
 
-/// Whether a row of the tree shows the scope, so that it can be selected again.
-pub fn contains_scope(nodes: &[BranchTreeNode], scope: &HistoryScope) -> bool {
-    nodes
-        .iter()
-        .any(|node| &node.scope == scope || contains_scope(&node.children, scope))
-}
 
 /// Compares names ignoring case, and numbers by their value, so that
 /// `issue-2` comes before `issue-10`.

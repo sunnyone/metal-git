@@ -4,7 +4,7 @@ use std::cell::RefCell;
 
 use chrono::*;
 
-use git2::{Error, Oid};
+use git2::{Error, ErrorCode, Oid};
 use crate::repository_manager::RepositoryManager;
 
 /// Which commits the history shows.
@@ -397,8 +397,13 @@ pub fn collect_tree(repository_manager: &RepositoryManager, scope: HistoryScope)
             revwalk.push_glob("refs/tags/*")?;
         }
         HistoryScope::CurrentBranch => revwalk.push_head()?,
-        // Peeled so that an annotated tag starts from its commit
-        HistoryScope::Ref(name) => revwalk.push(repo.find_reference(name)?.peel_to_commit()?.id())?,
+        // Peeled so that an annotated tag starts from its commit. A reference
+        // that is gone shows nothing, as a prefix without references does.
+        HistoryScope::Ref(name) => match repo.find_reference(name) {
+            Ok(reference) => revwalk.push(reference.peel_to_commit()?.id())?,
+            Err(err) if err.code() == ErrorCode::NotFound => {}
+            Err(err) => return Err(err),
+        },
         HistoryScope::Prefix(prefix) => revwalk.push_glob(&format!("{}*", prefix))?,
     }
 
