@@ -5,7 +5,7 @@ extern crate tempdir;
 mod util;
 use crate::util::branch_test_repo::BranchTestRepo;
 use crate::util::test_repo::TestRepo;
-use metal_git::branch_tree::{collect_branch_tree, contains_scope, natural_cmp, BranchTreeKind, BranchTreeNode};
+use metal_git::branch_tree::{collect_branch_tree, natural_cmp, BranchTreeKind, BranchTreeNode};
 use metal_git::railway::HistoryScope;
 use std::cmp::Ordering;
 
@@ -132,8 +132,6 @@ pub fn rows_carry_the_scope_they_show() {
     let origin = &nodes[3].children[0];
     assert_eq!(HistoryScope::Prefix("refs/remotes/origin/".to_owned()), origin.scope);
     assert_eq!((BranchTreeKind::RemoteBranch, Some("origin/main")), (origin.children[0].kind, origin.children[0].branch_name()));
-    assert!(contains_scope(&nodes, &HistoryScope::Ref("refs/heads/user/me/fix/x".to_owned())));
-    assert!(!contains_scope(&nodes, &HistoryScope::Ref("refs/heads/gone".to_owned())));
 }
 
 #[test]

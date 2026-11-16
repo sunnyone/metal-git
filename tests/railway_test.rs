@@ -252,15 +252,12 @@ pub fn ref_scope_starts_from_the_commit_of_an_annotated_tag() {
 }
 
 #[test]
-pub fn ref_scope_of_a_missing_reference_is_an_error() {
+pub fn ref_scope_of_a_missing_reference_shows_nothing() {
     let test_repo = TestRepo::branches_with_distinct_files();
 
-    let result = railway::collect_tree(
-        &test_repo.repository_manager(),
-        railway::HistoryScope::Ref("refs/heads/missing".to_owned()),
-    );
+    let graph = collect(&test_repo, railway::HistoryScope::Ref("refs/heads/missing".to_owned()));
 
-    assert!(result.is_err());
+    assert_eq!(0, graph.len());
 }
 
 #[test]

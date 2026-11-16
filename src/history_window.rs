@@ -503,7 +503,7 @@ impl HistoryWindow {
 
     /// Rebuilds the tree from the references, keeping the folders that were
     /// collapsed, and selects the row of the history scope again. A scope whose
-    /// reference is gone goes back to all branches.
+    /// reference is gone keeps no row selected, and its history shows nothing.
     fn load_branch_tree(&self) -> Result<(), Error> {
         let repo = self.repository_manager.open()?;
         let nodes = branch_tree::collect_branch_tree(&repo)?;
@@ -513,10 +513,6 @@ impl HistoryWindow {
             .filter(|row| row.is_expandable() && !row.is_expanded())
             .filter_map(|row| branch_tree_node(&row).map(|node| node.scope.clone()))
             .collect::<HashSet<_>>();
-
-        if !branch_tree::contains_scope(&nodes, &self.history_scope.borrow()) {
-            self.history_scope.replace(HistoryScope::AllBranches);
-        }
 
         self.updating_branch_tree.set(true);
         let items = nodes
