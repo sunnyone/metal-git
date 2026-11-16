@@ -5,6 +5,7 @@ use crate::railway::HistoryScope;
 use git2::{Error, ReferenceType, Repository};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 const LOCAL_PREFIX: &str = "refs/heads/";
 const REMOTE_PREFIX: &str = "refs/remotes/";
@@ -31,12 +32,14 @@ pub struct BranchTreeNode {
     pub scope: HistoryScope,
     /// True for the local branch that HEAD points to
     pub is_head: bool,
+    /// The part of the label that a filter matched, in bytes
+    pub highlight: Option<Range<usize>>,
     pub children: Vec<BranchTreeNode>,
 }
 
 impl BranchTreeNode {
     fn new(label: String, kind: BranchTreeKind, scope: HistoryScope, children: Vec<BranchTreeNode>) -> BranchTreeNode {
-        BranchTreeNode { label, kind, scope, is_head: false, children }
+        BranchTreeNode { label, kind, scope, is_head: false, highlight: None, children }
     }
 
     /// The branch name a checkout takes, like `feature/login` or `origin/main`.
@@ -103,6 +106,55 @@ pub fn collect_branch_tree(repo: &Repository) -> Result<Vec<BranchTreeNode>, Err
     Ok(nodes)
 }
 
+/// The rows whose name contains `query`, ignoring ASCII case, under their
+/// folders and headers. A name is matched with its folders, like
+/// `feature/login` or `origin/main`, so a folder that matches keeps every row
+/// in it. The rows of all branches and the current branch are left out, as
+/// they are not names, and so are headers with no rows left.
+pub fn filter_branch_tree(nodes: &[BranchTreeNode], query: &str) -> Vec<BranchTreeNode> {
+    let query = query.to_ascii_lowercase();
+    nodes
+        .iter()
+        .filter(|node| node.kind == BranchTreeKind::Header)
+        .filter_map(|header| {
+            let children = filter_nodes(&header.children, "", &query);
+            (!children.is_empty()).then(|| copy_node(header, None, children))
+        })
+        .collect()
+}
+
+/// `parent_path` is the names of the folders above, like `origin/feature/`.
+fn filter_nodes(nodes: &[BranchTreeNode], parent_path: &str, query: &str) -> Vec<BranchTreeNode> {
+    nodes
+        .iter()
+        .filter_map(|node| {
+            let path = format!("{}{}", parent_path, node.label);
+            // ASCII lowercasing keeps the byte offsets of the path
+            let found = path.to_ascii_lowercase().find(query).map(|start| start..start + query.len());
+            let highlight = found.as_ref().and_then(|found| {
+                let start = found.start.max(parent_path.len());
+                (start < found.end).then(|| start - parent_path.len()..found.end - parent_path.len())
+            });
+            if node.kind == BranchTreeKind::Folder {
+                let children = filter_nodes(&node.children, &path, query);
+                (!children.is_empty()).then(|| copy_node(node, highlight, children))
+            } else {
+                found.is_some().then(|| copy_node(node, highlight, vec![]))
+            }
+        })
+        .collect()
+}
+
+fn copy_node(node: &BranchTreeNode, highlight: Option<Range<usize>>, children: Vec<BranchTreeNode>) -> BranchTreeNode {
+    BranchTreeNode {
+        label: node.label.clone(),
+        kind: node.kind,
+        scope: node.scope.clone(),
+        is_head: node.is_head,
+        highlight,
+        children,
+    }
+}
 
 /// Compares names ignoring case, and numbers by their value, so that
 /// `issue-2` comes before `issue-10`.
