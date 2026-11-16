@@ -253,6 +253,7 @@ fn history_window_scenarios() {
     branch_tree_double_click_should_check_out_a_remote_branch(&app);
     sidebar_should_be_hidden_and_shown_by_the_toggle_action(&app);
     branch_tree_filter_should_keep_the_history_and_the_collapsed_folders(&app);
+    branch_filter_should_be_reached_from_the_keyboard(&app);
 }
 
 fn should_switch_from_the_right_clicked_history_row_and_refresh_the_window(app: &gtk::Application) {
@@ -530,4 +531,46 @@ fn branch_tree_filter_should_keep_the_history_and_the_collapsed_folders(app: &gt
     assert!(!labels.contains(&"    group_feature".to_owned()));
     assert!(!history_window.branch_tree_empty_label.is_visible());
     assert_eq!("feature_test", selected_branch_tree_label(&history_window));
+}
+
+fn focus_is_in(history_window: &HistoryWindow, widget: &impl IsA<gtk::Widget>) -> bool {
+    GtkWindowExt::focus(&history_window.window).is_some_and(|focus| focus.is_ancestor(widget) || &focus == widget.upcast_ref())
+}
+
+fn branch_filter_should_be_reached_from_the_keyboard(app: &gtk::Application) {
+    let test_repo = HistoryWindowTestRepo::new();
+    let history_window = open_history_window(app, &test_repo);
+    let entry = history_window.branch_filter_entry.clone();
+    assert!(history_window.sidebar.is_visible());
+    history_window.history_list_view.grab_focus();
+
+    // Showing the sidebar with F9 focuses the filter, and hiding it gives the
+    // focus back to the history
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    assert!(focus_is_in(&history_window, &history_window.history_list_view));
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    assert!(focus_is_in(&history_window, &entry));
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    assert!(focus_is_in(&history_window, &history_window.history_list_view));
+
+    // Ctrl+B shows the sidebar too, and selects the text to replace it
+    entry.set_text("group");
+    WidgetExt::activate_action(&history_window.window, "win.find-branch", None).unwrap();
+    assert!(history_window.sidebar.is_visible());
+    assert!(focus_is_in(&history_window, &entry));
+    assert_eq!(Some((0, 5)), entry.selection_bounds());
+    let accels = app.accels_for_action("win.find-branch");
+    assert_eq!(vec!["<Control>b"], accels.iter().map(|accel| accel.as_str()).collect::<Vec<_>>());
+
+    // Enter shows the history of the first branch left
+    entry.emit_activate();
+    assert_eq!(
+        HistoryScope::Ref("refs/remotes/origin/group_feature".to_owned()),
+        *history_window.history_scope.borrow()
+    );
+    assert_eq!("group_feature", selected_branch_tree_label(&history_window));
+
+    entry.set_text("");
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
+    WidgetExt::activate_action(&history_window.window, "win.toggle-sidebar", None).unwrap();
 }

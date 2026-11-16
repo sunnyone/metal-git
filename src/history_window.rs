@@ -37,6 +37,7 @@ use std::time::Duration;
 const TASK_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 const TOGGLE_SIDEBAR_ACTION: &str = "toggle-sidebar";
+const FIND_BRANCH_ACTION: &str = "find-branch";
 const SIDEBAR_WIDTH: i32 = 220;
 
 pub struct HistoryWindow {
@@ -122,6 +123,11 @@ impl HistoryWindow {
             gio::SimpleAction::new_stateful(TOGGLE_SIDEBAR_ACTION, None, &sidebar_visible.to_variant());
         window.add_action(&toggle_sidebar_action);
         app.set_accels_for_action(&format!("win.{}", TOGGLE_SIDEBAR_ACTION), &["F9"]);
+        // F9 shows and hides the sidebar; this is for finding a branch, and
+        // shows the sidebar only to reach the filter in it
+        let find_branch_action = gio::SimpleAction::new(FIND_BRANCH_ACTION, None);
+        window.add_action(&find_branch_action);
+        app.set_accels_for_action(&format!("win.{}", FIND_BRANCH_ACTION), &["<Control>b"]);
 
         // Icon only, so that it takes as little of the toolbar as a sidebar toggle usually does
         let sidebar_toggle = gtk::ToggleButton::builder()
@@ -189,7 +195,7 @@ impl HistoryWindow {
             .build();
 
         let branch_filter_entry = gtk::SearchEntry::builder()
-            .placeholder_text("Filter branches")
+            .placeholder_text("Filter branches (Ctrl+B)")
             .build();
         let branch_filter_row = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -381,6 +387,13 @@ impl HistoryWindow {
             }
         });
 
+        let w = Rc::downgrade(&history_window);
+        find_branch_action.connect_activate(move |_, _| {
+            if let Some(w) = w.upgrade() {
+                w.find_branch();
+            }
+        });
+
         // Children like the history list get the key first, so this only sees an unused Escape
         let key_controller = gtk::EventControllerKey::new();
         let w = Rc::downgrade(&history_window);
@@ -523,11 +536,45 @@ impl HistoryWindow {
 
         // Filtering only redoes the rows, so it follows each key without a delay
         let w = Rc::downgrade(self);
-        self.branch_filter_entry.connect_changed(move |_| {
+        self.branch_filter_entry.connect_changed(move |entry| {
+            let Some(w) = w.upgrade() else { return };
+            // Typing in the tree fills the filter but leaves the focus on the
+            // tree, where Enter would check out a branch. The focus follows
+            // the text instead.
+            if GtkWindowExt::focus(&w.window).is_some_and(|focus| focus.is_ancestor(&w.branch_tree_view)) {
+                entry.grab_focus();
+                entry.set_position(-1);
+            }
+            w.show_branch_tree();
+        });
+
+        // Typing in the tree goes to the filter
+        self.branch_filter_entry.set_key_capture_widget(Some(&self.branch_tree_view));
+
+        let w = Rc::downgrade(self);
+        self.branch_filter_entry.connect_activate(move |_| {
             if let Some(w) = w.upgrade() {
-                w.show_branch_tree();
+                w.select_first_filtered_row();
             }
         });
+
+        // Down moves from the filter to the rows. Escape does nothing in the
+        // filter for now, rather than going on to the window, where it shows
+        // all branches. Both are caught before the entry sees them.
+        let key_controller = gtk::EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = Rc::downgrade(self);
+        key_controller.connect_key_pressed(move |_, key, _, _| match key {
+            gdk::Key::Down => {
+                if let Some(w) = w.upgrade() {
+                    w.branch_tree_view.grab_focus();
+                }
+                Propagation::Stop
+            }
+            gdk::Key::Escape => Propagation::Stop,
+            _ => Propagation::Proceed,
+        });
+        self.branch_filter_entry.add_controller(key_controller);
 
         let w = Rc::downgrade(self);
         self.branch_tree_selection.connect_selected_notify(move |selection| {
@@ -638,6 +685,9 @@ impl HistoryWindow {
         self.set_history_scope(HistoryScope::AllBranches);
     }
 
+    /// Shows or hides the sidebar for the toggle button or F9. Shown, it
+    /// takes the focus to the filter; hidden, it leaves the focus on the
+    /// history instead of on a hidden widget.
     fn set_sidebar_visible(&self, visible: bool) {
         if visible == self.sidebar.is_visible() {
             return;
@@ -645,12 +695,46 @@ impl HistoryWindow {
         if visible {
             self.sidebar.set_visible(true);
             self.sidebar_paned.set_position(self.sidebar_position.get());
+            self.branch_filter_entry.grab_focus();
+            // Focusing selects the text, which is for finding a branch only
+            self.branch_filter_entry.set_position(-1);
         } else {
+            let focus_in_sidebar = GtkWindowExt::focus(&self.window).is_some_and(|focus| focus.is_ancestor(&self.sidebar));
             self.sidebar_position.set(self.sidebar_paned.position());
             self.sidebar.set_visible(false);
+            if focus_in_sidebar {
+                self.history_list_view.grab_focus();
+            }
         }
         if let Err(err) = app_settings::save_sidebar_visible(&app_settings::sidebar_visible_path(), visible) {
             eprintln!("Failed to save whether the sidebar is shown: {}", err);
+        }
+    }
+
+    /// Ctrl+B: the filter is focused with its text selected, so that typing
+    /// starts a new filter. The sidebar is shown first when it is hidden.
+    fn find_branch(&self) {
+        if !self.sidebar.is_visible() {
+            if let Some(action) = self.window.lookup_action(TOGGLE_SIDEBAR_ACTION) {
+                action.change_state(&true.to_variant());
+            }
+        }
+        self.branch_filter_entry.grab_focus();
+        self.branch_filter_entry.select_region(0, -1);
+    }
+
+    /// Enter in the filter shows the history of the first branch or tag left.
+    fn select_first_filtered_row(&self) {
+        if !self.branch_tree_filtered.get() {
+            return;
+        }
+        let first = (0..self.branch_tree_model.n_items()).find(|position| {
+            self.branch_tree_model.row(*position).as_ref().and_then(branch_tree_node).is_some_and(|node| {
+                matches!(node.kind, BranchTreeKind::LocalBranch | BranchTreeKind::RemoteBranch | BranchTreeKind::Tag)
+            })
+        });
+        if let Some(position) = first {
+            self.branch_tree_selection.set_selected(position);
         }
     }
 
