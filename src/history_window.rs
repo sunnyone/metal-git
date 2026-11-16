@@ -63,6 +63,8 @@ pub struct HistoryWindow {
     sidebar_position: Cell<i32>,
     // Items are BoxedAnyObject(Rc<BranchTreeNode>), the rows at the top level
     branch_tree_store: gio::ListStore,
+    // The references as last read, which the rows are made from
+    branch_tree_nodes: RefCell<Vec<BranchTreeNode>>,
     branch_tree_model: gtk::TreeListModel,
     branch_tree_selection: gtk::SingleSelection,
     branch_tree_view: gtk::ListView,
@@ -301,6 +303,7 @@ impl HistoryWindow {
                 sidebar,
                 sidebar_position: Cell::new(SIDEBAR_WIDTH),
                 branch_tree_store,
+                branch_tree_nodes: RefCell::new(Vec::new()),
                 branch_tree_model,
                 branch_tree_selection,
                 branch_tree_view,
@@ -501,12 +504,20 @@ impl HistoryWindow {
         });
     }
 
-    /// Rebuilds the tree from the references, keeping the folders that were
-    /// collapsed, and selects the row of the history scope again. A scope whose
-    /// reference is gone keeps no row selected, and its history shows nothing.
+    /// Reads the references again and shows them in the tree.
     fn load_branch_tree(&self) -> Result<(), Error> {
         let repo = self.repository_manager.open()?;
-        let nodes = branch_tree::collect_branch_tree(&repo)?;
+        self.branch_tree_nodes.replace(branch_tree::collect_branch_tree(&repo)?);
+        self.show_branch_tree();
+        Ok(())
+    }
+
+    /// Rebuilds the rows from the references last read, keeping the folders
+    /// that were collapsed, and selects the row of the history scope again. A
+    /// scope whose reference is gone keeps no row selected, and its history
+    /// shows nothing.
+    fn show_branch_tree(&self) {
+        let nodes = self.branch_tree_nodes.borrow().clone();
 
         let collapsed = (0..self.branch_tree_model.n_items())
             .filter_map(|position| self.branch_tree_model.row(position))
@@ -539,8 +550,6 @@ impl HistoryWindow {
         }
         self.branch_tree_selection.set_selected(selected);
         self.updating_branch_tree.set(false);
-
-        Ok(())
     }
 
     fn set_history_scope(&self, scope: HistoryScope) {
