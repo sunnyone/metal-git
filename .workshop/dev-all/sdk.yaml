@@ -1,0 +1,5 @@
+name: dev-all
+version: "0.1"
+summary: Build dependencies for metal-git
+description: |
+  Installs native build tools and development libraries for metal-git,

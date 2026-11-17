@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update
+apt-get install -y --no-install-recommends \
+  build-essential \
+  ca-certificates \
+  cmake \
+  libgit2-dev \
+  libglib2.0-dev-bin \
+  libgtk-4-dev \
+  libssl-dev \
+  libxml2-utils \
+  pkg-config
