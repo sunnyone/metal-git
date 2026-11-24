@@ -8,6 +8,7 @@ mod differ;
 mod emphasis;
 mod from_git;
 mod model;
+mod syntax;
 
 pub use commit::{diff_trees, ListCommitDiffFileEntry, ListCommitDiffResult};
 pub use context::{Gap, Reveal};
@@ -18,3 +19,4 @@ pub use model::{
     initially_open, DiffHunk, DiffLine, FileDiff, FileStatus, LineKind, SideBySideRow,
     MAX_OPEN_FILE_LINES, MAX_OPEN_TOTAL_LINES,
 };
+pub use syntax::{Segment, Token, MAX_HIGHLIGHT_LINE_BYTES};

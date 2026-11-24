@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use super::emphasis::emphasize_changes;
+use super::syntax::Token;
 
 /// Files with more lines than this start closed, so that a large commit opens
 /// quickly. They are drawn when they are opened.
@@ -27,6 +28,9 @@ pub struct DiffLine {
     pub content: String,
     /// Byte ranges of `content` that changed within a line pair.
     pub emphasis: Vec<Range<usize>>,
+    /// Byte ranges of `content` that are tokens to color, in order. See
+    /// `FileDiff::highlight`.
+    pub syntax: Vec<(Range<usize>, Token)>,
 }
 
 #[derive(Clone, Debug)]
@@ -160,6 +164,9 @@ pub struct FileDiff {
     /// Whether the changed words of the line pairs are marked yet. Marking them
     /// is left until the file is shown, as it is the costly part of a large diff.
     pub emphasized: bool,
+    /// Whether the tokens of the lines are found yet. Finding them is left
+    /// until the file is shown, as it is costly too.
+    pub highlighted: bool,
 }
 
 impl FileDiff {
@@ -174,6 +181,7 @@ impl FileDiff {
                 new_lineno: Some(i as u32 + 1),
                 content: line.to_string(),
                 emphasis: Vec::new(),
+                syntax: Vec::new(),
             })
             .collect::<Vec<_>>();
         let line_count = lines.len() as u32;
@@ -197,6 +205,7 @@ impl FileDiff {
             old_content: None,
             whitespace_ignored: false,
             emphasized: true,
+            highlighted: false,
         }
     }
 

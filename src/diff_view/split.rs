@@ -309,6 +309,7 @@ impl SplitView {
                 .insert_file_head(&mut new_iter, &mut new_rows, file, open);
             if open {
                 file.emphasize();
+                file.highlight();
                 self.insert_body(
                     (&mut old_iter, &mut new_iter),
                     (&mut old_rows, &mut new_rows),
@@ -372,6 +373,7 @@ impl SplitView {
         let mut content = self.content.borrow_mut();
         let file = &mut content.files[file_index];
         file.emphasize();
+        file.highlight();
 
         let old_buffer = self.old.view.buffer();
         let new_buffer = self.new.view.buffer();
