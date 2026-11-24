@@ -142,7 +142,7 @@ glib::wrapper! {
     /// A text view of a diff that knows what each of its lines shows.
     pub struct DiffTextView(ObjectSubclass<imp::DiffTextView>)
         @extends gtk::TextView, gtk::Widget,
-        @implements gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Scrollable;
 }
 
 impl DiffTextView {

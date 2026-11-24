@@ -158,7 +158,7 @@ glib::wrapper! {
     /// they stay aligned whatever font the text of each line is drawn in.
     pub struct LineNumberGutter(ObjectSubclass<imp::LineNumberGutter>)
         @extends gtk::Widget,
-        @implements gtk::Buildable, gtk::ConstraintTarget;
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
 impl LineNumberGutter {
