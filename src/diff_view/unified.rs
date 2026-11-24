@@ -76,6 +76,7 @@ impl UnifiedView {
             let mut slot = text::insert_file_head(&self.folds, &mut iter, file, open);
             if open {
                 file.emphasize();
+                file.highlight();
                 self.insert_body(&mut iter, &mut rows, file_index, file, &slot.body);
                 slot.loaded = true;
             }
@@ -149,6 +150,7 @@ impl UnifiedView {
         let mut content = self.content.borrow_mut();
         let file = &mut content.files[file_index];
         file.emphasize();
+        file.highlight();
 
         let buffer = self.view.buffer();
         let mut iter = text::file_body_iter(&buffer, slot);

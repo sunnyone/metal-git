@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::diff_text_view::DiffTextView;
-use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, LineKind, Reveal};
+use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, LineKind, Reveal, Token};
 
 const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";
@@ -90,11 +90,51 @@ fn create_tag_table() -> gtk::TextTagTable {
     for tag in &tags {
         table.add(tag);
     }
+    // Colors of tokens, which set only the foreground so that the line
+    // backgrounds and the emphasis show through
+    for token in Token::ALL {
+        table.add(&token_tag(token));
+    }
     // Badges of the status of a file, drawn over the line backgrounds
     for status in FileStatus::ALL {
         table.add(&status_tag(status));
     }
     table
+}
+
+fn token_tag_name(token: Token) -> &'static str {
+    match token {
+        Token::Comment => "token-comment",
+        Token::String => "token-string",
+        Token::Keyword => "token-keyword",
+        Token::Constant => "token-constant",
+        Token::Type => "token-type",
+        Token::Function => "token-function",
+    }
+}
+
+/// The color of a kind of token, of a middle lightness so that it reads on
+/// light and dark themes, as the other colors of the view do.
+fn token_color(token: Token) -> &'static str {
+    match token {
+        Token::Comment => "rgba(127,127,127,1)",
+        Token::String => "rgba(196,110,30,1)",
+        Token::Keyword => "rgba(170,80,210,1)",
+        Token::Constant => "rgba(40,130,215,1)",
+        Token::Type => "rgba(20,150,150,1)",
+        Token::Function => "rgba(150,130,20,1)",
+    }
+}
+
+fn token_tag(token: Token) -> gtk::TextTag {
+    let tag = gtk::TextTag::builder()
+        .name(token_tag_name(token))
+        .foreground(token_color(token))
+        .build();
+    if token == Token::Comment {
+        tag.set_style(gtk::pango::Style::Italic);
+    }
+    tag
 }
 
 fn status_tag_name(status: FileStatus) -> String {
@@ -192,8 +232,8 @@ pub fn line_tags(kind: LineKind) -> (Option<&'static str>, &'static str) {
     }
 }
 
-/// Inserts the content of a line and its line break, emphasizing its changed words.
-/// `tags` apply to the whole line.
+/// Inserts the content of a line and its line break, emphasizing its changed
+/// words and coloring its tokens. `tags` apply to the whole line.
 pub fn insert_content(
     buffer: &gtk::TextBuffer,
     iter: &mut gtk::TextIter,
@@ -201,16 +241,16 @@ pub fn insert_content(
     tags: &[&str],
 ) {
     let (_, emphasis_tag) = line_tags(line.kind);
-    let mut emphasized_tags = tags.to_vec();
-    emphasized_tags.push(emphasis_tag);
-
-    let mut pos = 0;
-    for range in &line.emphasis {
-        insert(buffer, iter, &line.content[pos..range.start], tags);
-        insert(buffer, iter, &line.content[range.clone()], &emphasized_tags);
-        pos = range.end;
+    for segment in line.segments() {
+        let mut segment_tags = tags.to_vec();
+        if segment.emphasized {
+            segment_tags.push(emphasis_tag);
+        }
+        if let Some(token) = segment.token {
+            segment_tags.push(token_tag_name(token));
+        }
+        insert(buffer, iter, &line.content[segment.range], &segment_tags);
     }
-    insert(buffer, iter, &line.content[pos..], tags);
     insert(buffer, iter, "\n", tags);
 }
 

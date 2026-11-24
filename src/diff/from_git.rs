@@ -37,6 +37,7 @@ pub fn files_from_diff(diff: &Diff) -> Result<Vec<FileDiff>, Error> {
                     old_content: None,
                     whitespace_ignored: false,
                     emphasized: true,
+                    highlighted: true,
                 }),
             }
         })
@@ -72,6 +73,7 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
                 new_lineno: line.new_lineno(),
                 content: strip_line_break(&String::from_utf8_lossy(line.content())).to_string(),
                 emphasis: Vec::new(),
+                syntax: Vec::new(),
             });
         }
 
@@ -98,6 +100,7 @@ fn file_from_patch_unemphasized(patch: &Patch) -> Result<FileDiff, Error> {
         old_content: None,
         whitespace_ignored: false,
         emphasized: false,
+        highlighted: false,
     })
 }
 

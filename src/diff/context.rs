@@ -134,6 +134,7 @@ fn context_lines(
         new_lineno: Some((n as i64 + offset) as u32),
         content: content.get(n as usize - 1).cloned().unwrap_or_default(),
         emphasis: Vec::new(),
+        syntax: Vec::new(),
     })
 }
 
@@ -228,6 +229,9 @@ impl FileDiff {
             let next = self.hunks.remove(below);
             self.hunks[above].merge(next);
         }
+        // The revealed lines have no tokens yet, and change how the lines
+        // around them parse
+        self.highlighted = false;
         true
     }
 }
