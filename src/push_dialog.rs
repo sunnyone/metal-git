@@ -88,6 +88,15 @@ impl PushDialog {
         let local_refs: Vec<&str> = local_names.iter().map(String::as_str).collect();
         let local_dropdown = gtk::DropDown::from_strings(&local_refs);
         local_dropdown.set_hexpand(true);
+        // A search above the list finds a branch by any part of its name,
+        // like the filter of the branch tree
+        local_dropdown.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            None::<gtk::Expression>,
+            "string",
+        )));
+        local_dropdown.set_enable_search(true);
+        local_dropdown.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
         let remote_refs: Vec<&str> = remote_names.iter().map(String::as_str).collect();
         let remote_dropdown = gtk::DropDown::from_strings(&remote_refs);
         let remote_branch_entry = gtk::Entry::builder()
