@@ -568,7 +568,7 @@ impl CommitWindow {
     }
 
     pub fn hide(&self) {
-        self.window.hide();
+        self.window.set_visible(false);
     }
 
     pub fn refresh(&self) {

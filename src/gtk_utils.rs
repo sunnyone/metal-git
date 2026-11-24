@@ -11,16 +11,11 @@ macro_rules! dialog_when_error {
 }
 
 pub fn message_box_error(message: &str) {
-    let dialog = gtk::MessageDialog::builder()
+    gtk::AlertDialog::builder()
         .modal(true)
-        .message_type(gtk::MessageType::Error)
-        .buttons(gtk::ButtonsType::Ok)
-        .text(message)
-        .build();
-    dialog.connect_response(|dialog, _| {
-        dialog.close();
-    });
-    dialog.present();
+        .message(message)
+        .build()
+        .show(None::<&gtk::Window>);
 }
 
 pub fn icon_button(icon_name: &str, label: &str) -> gtk::Button {

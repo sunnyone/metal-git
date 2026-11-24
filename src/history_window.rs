@@ -1104,7 +1104,7 @@ fn update_from_selection(
 
 fn install_history_list_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(
+    provider.load_from_string(
         "
         .history-list {
             border-spacing: 0;
