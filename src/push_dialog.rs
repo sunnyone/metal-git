@@ -516,30 +516,24 @@ impl PushDialog {
             ));
         }
 
-        let confirmation = gtk::MessageDialog::builder()
-            .transient_for(&self.window)
+        // Cancel is the default, and what Escape chooses
+        let confirmation = gtk::AlertDialog::builder()
             .modal(true)
-            .message_type(gtk::MessageType::Warning)
-            .buttons(gtk::ButtonsType::None)
-            .text(format!("Force push {} to {}?", request.target.local_branch, destination))
-            .secondary_text(detail)
+            .message(format!("Force push {} to {}?", request.target.local_branch, destination))
+            .detail(detail)
+            .buttons(["Cancel", FORCE_PUSH_BUTTON_LABEL])
+            .cancel_button(0)
+            .default_button(0)
             .build();
-        confirmation.add_button("Cancel", gtk::ResponseType::Cancel);
-        confirmation
-            .add_button("Force Push", gtk::ResponseType::Accept)
-            .add_css_class("destructive-action");
-        confirmation.set_default_response(gtk::ResponseType::Cancel);
 
         let d = Rc::downgrade(self);
-        confirmation.connect_response(move |confirmation, response| {
-            confirmation.close();
-            if response == gtk::ResponseType::Accept {
+        confirmation.choose(Some(&self.window), None::<&gtk::gio::Cancellable>, move |response| {
+            if response == Ok(FORCE_PUSH_BUTTON) {
                 if let Some(d) = d.upgrade() {
-                    d.confirm(request.clone());
+                    d.confirm(request);
                 }
             }
         });
-        confirmation.present();
     }
 
     fn confirm(&self, request: PushRequest) {
@@ -547,6 +541,10 @@ impl PushDialog {
         close_later(&self.window);
     }
 }
+
+// The buttons of the force push confirmation, Cancel first
+const FORCE_PUSH_BUTTON_LABEL: &str = "Force Push";
+const FORCE_PUSH_BUTTON: i32 = 1;
 
 /// Closes the window once the click that asked for it has finished,
 /// so the button is not destroyed while it is still pressed.
@@ -618,7 +616,7 @@ fn install_css() {
     }
 
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(
+    provider.load_from_string(
         "
         .push-warning {
             padding: 8px;

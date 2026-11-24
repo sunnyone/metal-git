@@ -1104,7 +1104,7 @@ fn update_from_selection(
 
 fn install_history_list_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(
+    provider.load_from_string(
         "
         .history-list {
             border-spacing: 0;
@@ -1328,7 +1328,7 @@ glib::wrapper! {
     /// into view, so the station is replaced on every bind.
     pub struct HistoryRow(ObjectSubclass<imp::HistoryRow>)
         @extends gtk::Box, gtk::Widget,
-        @implements gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget, gtk::Orientable;
 }
 
 impl HistoryRow {

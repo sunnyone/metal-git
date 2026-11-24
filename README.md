@@ -12,7 +12,7 @@ This program is now in experimental stage. It may destroy your files or reposito
 
 ## Build and run
 
-Install build dependencies first. This project requires GTK 4, libgit2, CMake, and `glib-compile-resources`.
+Install build dependencies first. This project requires GTK 4.14 or later, libgit2, CMake, and `glib-compile-resources`.
 
 Use a recent Rust toolchain, then run:
 
@@ -31,7 +31,7 @@ If `glib-compile-resources` is missing, install the GLib development tools packa
 
 ## Ubuntu packages
 
-On Ubuntu 22.04 or later:
+On Ubuntu 24.04 or later:
 
 ```bash
 $ sudo apt install libgtk-4-dev libgit2-dev libglib2.0-dev-bin cmake
