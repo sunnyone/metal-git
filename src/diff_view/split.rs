@@ -3,9 +3,9 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::diff_text_view::{DiffTextView, Row, RowRecorder};
+use super::diff_text_view::{DiffTextView, Expander, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
-use super::text::{self, FileSlot, Folds, Links, RevealFileGap, RevealGap};
+use super::text::{self, FileSlot, Folds, Links, RevealFileGap};
 use super::SharedContent;
 use crate::diff::{DiffLine, FileDiff, Gap};
 
@@ -67,27 +67,6 @@ impl Side {
         rows.set(iter, Row::line(line));
         text::insert_content(&buffer, iter, line, &tags);
         start
-    }
-
-    /// Inserts the line that stands for a gap.
-    fn insert_gap(
-        &self,
-        iter: &mut gtk::TextIter,
-        rows: &mut RowRecorder,
-        gap: &Gap,
-        hunk_count: usize,
-        file_body: &str,
-        reveal: &RevealGap,
-    ) {
-        rows.set(iter, Row::Gap);
-        text::insert_gap(
-            &self.links,
-            iter,
-            gap,
-            hunk_count,
-            &[text::FILE_BODY, file_body],
-            reveal,
-        );
     }
 
     /// Deletes the lines of a file, so that they can be inserted again.
@@ -248,9 +227,11 @@ impl SplitView {
         self.root.clone().upcast()
     }
 
-    /// Sets what reveals unchanged lines when a link of a gap is clicked. The
-    /// caller changes the file and draws it again with `reload_file`.
+    /// Sets what reveals unchanged lines when a button or link of a gap is
+    /// clicked. The caller changes the file and draws it again with
+    /// `reload_file`.
     pub fn connect_reveal(&self, reveal: RevealFileGap) {
+        self.old.gutter.connect_reveal(reveal.clone());
         self.reveal.replace(Some(reveal));
     }
 
@@ -439,38 +420,42 @@ impl SplitView {
             .borrow()
             .as_ref()
             .map(|reveal| text::reveal_gap_of(reveal, file_index));
-        let gaps = file.gaps();
-        let insert_gap = |old_iter: &mut gtk::TextIter,
-                          new_iter: &mut gtk::TextIter,
-                          old_rows: &mut RowRecorder,
-                          new_rows: &mut RowRecorder,
-                          before_hunk| {
-            let gap = gaps.iter().find(|gap| gap.before_hunk == before_hunk);
-            if let (Some(gap), Some(reveal)) = (gap, &reveal) {
-                let hunk_count = file.hunks.len();
-                self.old
-                    .insert_gap(old_iter, old_rows, gap, hunk_count, old_file_body, reveal);
-                self.new
-                    .insert_gap(new_iter, new_rows, gap, hunk_count, new_file_body, reveal);
+        let gaps = match reveal {
+            Some(_) => text::expandable_gaps(file, file_index),
+            None => Vec::new(),
+        };
+        let gap_before = |before_hunk| gaps.iter().find(|(gap, _)| gap.before_hunk == before_hunk);
+        let old_tags = [text::FILE_BODY, old_file_body];
+        let new_tags = [text::FILE_BODY, new_file_body];
+        // Only on the old side, as the buttons are only in its gutter
+        let insert_show_all = |iter: &mut gtk::TextIter, (gap, expander): &(Gap, Expander)| {
+            if let Some(reveal) = &reveal {
+                text::insert_show_all(&self.old.links, iter, gap, *expander, &old_tags, reveal);
             }
         };
 
         for (hunk_index, hunk) in file.hunks.iter().enumerate() {
-            insert_gap(old_iter, new_iter, old_rows, new_rows, hunk_index);
-            old_rows.set(old_iter, Row::HunkHeader);
-            new_rows.set(new_iter, Row::HunkHeader);
-            let old_body = self.old.folds.insert_head(
+            let gap = gap_before(hunk_index);
+            let expander = gap.map(|(_, expander)| *expander);
+            let old_body = text::insert_hunk_head(
+                &self.old.folds,
+                old_rows,
                 old_iter,
                 &hunk.header,
-                &[text::HUNK_HEADER, text::FILE_BODY, old_file_body],
-                true,
+                expander,
+                &old_tags,
             );
-            let new_body = self.new.folds.insert_head(
+            let new_body = text::insert_hunk_head(
+                &self.new.folds,
+                new_rows,
                 new_iter,
                 &hunk.header,
-                &[text::HUNK_HEADER, text::FILE_BODY, new_file_body],
-                true,
+                expander,
+                &new_tags,
             );
+            if let Some(gap) = gap {
+                insert_show_all(old_iter, gap);
+            }
 
             for (old, new) in hunk.side_by_side() {
                 let old_line = self.old.insert_line(
@@ -495,6 +480,10 @@ impl SplitView {
                 }
             }
         }
-        insert_gap(old_iter, new_iter, old_rows, new_rows, file.hunks.len());
+        if let Some(gap) = gap_before(file.hunks.len()) {
+            text::insert_trailing_gap(old_rows, old_iter, gap.1, &old_tags);
+            text::insert_trailing_gap(new_rows, new_iter, gap.1, &new_tags);
+            insert_show_all(old_iter, gap);
+        }
     }
 }

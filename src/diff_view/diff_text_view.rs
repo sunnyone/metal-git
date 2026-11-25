@@ -4,7 +4,16 @@ use gtk::{gdk, glib, graphene};
 use std::cell::RefCell;
 
 use super::text;
-use crate::diff::{DiffLine, LineKind};
+use crate::diff::{DiffLine, GapButtons, LineKind};
+
+/// The buttons in the gutter that reveal the lines of a gap of a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Expander {
+    pub file_index: usize,
+    /// The hunk the gap comes before, as `Gap` gives it
+    pub before_hunk: usize,
+    pub buttons: GapButtons,
+}
 
 /// What one line of the buffer shows, which decides its background and the
 /// line numbers beside it.
@@ -15,9 +24,10 @@ pub enum Row {
     /// Stands for a line that only the other side of a split view has
     Filler,
     FileHeader,
-    HunkHeader,
-    /// Stands for unchanged lines left out of the diff
-    Gap,
+    /// With the buttons of the gap before the hunk, if there is one
+    HunkHeader(Option<Expander>),
+    /// Stands for the unchanged lines left out after the last hunk
+    Gap(Expander),
     Line {
         kind: LineKind,
         old_lineno: Option<u32>,
@@ -34,13 +44,21 @@ impl Row {
         }
     }
 
+    pub fn expander(&self) -> Option<Expander> {
+        match *self {
+            Row::HunkHeader(expander) => expander,
+            Row::Gap(expander) => Some(expander),
+            _ => None,
+        }
+    }
+
     pub fn background(&self) -> Option<gdk::RGBA> {
         let color = match self {
             Row::Blank => return None,
             Row::Filler => text::FILLER_BACKGROUND,
             Row::FileHeader => text::FILE_HEADER_BACKGROUND,
-            Row::HunkHeader => text::HUNK_HEADER_BACKGROUND,
-            Row::Gap => text::GAP_BACKGROUND,
+            Row::HunkHeader(_) => text::HUNK_HEADER_BACKGROUND,
+            Row::Gap(_) => text::GAP_BACKGROUND,
             Row::Line { kind, .. } => match kind {
                 LineKind::Added => text::ADDED_BACKGROUND,
                 LineKind::Removed => text::REMOVED_BACKGROUND,
@@ -175,6 +193,20 @@ impl DiffTextView {
         current.drain(start..end);
         drop(current);
         self.queue_draw();
+    }
+
+    /// The row at `y` in the coordinates of the left gutter, with its top in
+    /// those coordinates and its height.
+    pub fn row_at_gutter_y(&self, y: i32) -> Option<(Row, i32, i32)> {
+        let (_, by) = self.window_to_buffer_coords(gtk::TextWindowType::Left, 0, y);
+        let (iter, _) = self.line_at_y(by);
+        let (top, height) = self.line_yrange(&iter);
+        if by < top || by >= top + height {
+            return None;
+        }
+        let row = *self.imp().rows.borrow().get(iter.line() as usize)?;
+        let (_, top) = self.buffer_to_window_coords(gtk::TextWindowType::Left, 0, top);
+        Some((row, top, height))
     }
 
     pub fn max_lineno(&self) -> u32 {

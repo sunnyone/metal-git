@@ -2,11 +2,11 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::diff_text_view::{DiffTextView, Row, RowRecorder};
+use super::diff_text_view::{DiffTextView, Expander, Row, RowRecorder};
 use super::gutter::{Columns, LineNumberGutter};
 use super::text::{self, FileSlot, Folds, Links, RevealFileGap};
 use super::SharedContent;
-use crate::diff::FileDiff;
+use crate::diff::{FileDiff, Gap};
 
 /// One column with old and new line numbers, word emphasis, and files and hunks
 /// that fold when their head line is clicked.
@@ -53,9 +53,11 @@ impl UnifiedView {
         self.scrolled.clone().upcast()
     }
 
-    /// Sets what reveals unchanged lines when a link of a gap is clicked. The
-    /// caller changes the file and draws it again with `reload_file`.
+    /// Sets what reveals unchanged lines when a button or link of a gap is
+    /// clicked. The caller changes the file and draws it again with
+    /// `reload_file`.
     pub fn connect_reveal(&self, reveal: RevealFileGap) {
+        self.gutter.connect_reveal(reveal.clone());
         self.reveal.replace(Some(reveal));
     }
 
@@ -192,31 +194,31 @@ impl UnifiedView {
             .borrow()
             .as_ref()
             .map(|reveal| text::reveal_gap_of(reveal, file_index));
-        let gaps = file.gaps();
-        let insert_gap = |iter: &mut gtk::TextIter, rows: &mut RowRecorder, before_hunk| {
-            let gap = gaps.iter().find(|gap| gap.before_hunk == before_hunk);
-            if let (Some(gap), Some(reveal)) = (gap, &reveal) {
-                rows.set(iter, Row::Gap);
-                text::insert_gap(
-                    &self.links,
-                    iter,
-                    gap,
-                    file.hunks.len(),
-                    &[text::FILE_BODY, file_body],
-                    reveal,
-                );
+        let gaps = match reveal {
+            Some(_) => text::expandable_gaps(file, file_index),
+            None => Vec::new(),
+        };
+        let gap_before = |before_hunk| gaps.iter().find(|(gap, _)| gap.before_hunk == before_hunk);
+        let body_tags = [text::FILE_BODY, file_body];
+        let insert_show_all = |iter: &mut gtk::TextIter, (gap, expander): &(Gap, Expander)| {
+            if let Some(reveal) = &reveal {
+                text::insert_show_all(&self.links, iter, gap, *expander, &body_tags, reveal);
             }
         };
 
         for (hunk_index, hunk) in file.hunks.iter().enumerate() {
-            insert_gap(iter, rows, hunk_index);
-            rows.set(iter, Row::HunkHeader);
-            let body = self.folds.insert_head(
+            let gap = gap_before(hunk_index);
+            let body = text::insert_hunk_head(
+                &self.folds,
+                rows,
                 iter,
                 &hunk.header,
-                &[text::HUNK_HEADER, text::FILE_BODY, file_body],
-                true,
+                gap.map(|(_, expander)| *expander),
+                &body_tags,
             );
+            if let Some(gap) = gap {
+                insert_show_all(iter, gap);
+            }
 
             for line in &hunk.lines {
                 let (line_tag, _) = text::line_tags(line.kind);
@@ -227,6 +229,9 @@ impl UnifiedView {
                 text::insert_content(&buffer, iter, line, &tags);
             }
         }
-        insert_gap(iter, rows, file.hunks.len());
+        if let Some(gap) = gap_before(file.hunks.len()) {
+            text::insert_trailing_gap(rows, iter, gap.1, &body_tags);
+            insert_show_all(iter, gap);
+        }
     }
 }
