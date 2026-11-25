@@ -2,12 +2,12 @@ use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::diff_text_view::DiffTextView;
-use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, LineKind, Reveal, Token};
+use super::diff_text_view::{DiffTextView, Expander, Row, RowRecorder};
+use crate::diff::{DiffLine, FileDiff, FileStatus, Gap, GapButtons, LineKind, Reveal, Token};
 
 const BASE: &str = "base";
 pub const FILE_HEADER: &str = "file-header";
-pub const HUNK_HEADER: &str = "hunk-header";
+const HUNK_HEADER: &str = "hunk-header";
 pub const ADDED: &str = "added";
 pub const REMOVED: &str = "removed";
 pub const ADDED_EMPHASIS: &str = "added-emphasis";
@@ -20,6 +20,9 @@ pub const FILE_BODY: &str = "file-body";
 /// The line that stands for unchanged lines left out of a diff
 const GAP: &str = "gap";
 const LINK: &str = "link";
+/// Makes room on the head line of a hunk for two buttons of a gap, one over
+/// the other
+const TWO_EXPANDERS: &str = "two-expanders";
 
 // Translucent so that they read well on light and dark themes
 pub const FILE_HEADER_BACKGROUND: &str = "rgba(127,127,127,0.22)";
@@ -31,6 +34,8 @@ pub const FILLER_BACKGROUND: &str = "rgba(127,127,127,0.10)";
 pub const FILE_SEPARATOR_COLOR: &str = "rgba(127,127,127,0.65)";
 /// How far the lines of a file are indented from its head line
 const FILE_BODY_INDENT: i32 = 20;
+/// Added above and below a line that has two buttons of a gap beside it
+const TWO_EXPANDERS_PADDING: i32 = 6;
 pub const LINENO_COLOR: &str = "rgba(127,127,127,0.85)";
 
 const OPEN_MARKER: &str = "▾";
@@ -66,6 +71,11 @@ fn create_tag_table() -> gtk::TextTagTable {
         gtk::TextTag::builder()
             .name(GAP)
             .foreground("rgba(127,127,127,1)")
+            .build(),
+        gtk::TextTag::builder()
+            .name(TWO_EXPANDERS)
+            .pixels_above_lines(TWO_EXPANDERS_PADDING)
+            .pixels_below_lines(TWO_EXPANDERS_PADDING)
             .build(),
         gtk::TextTag::builder()
             .name(LINK)
@@ -390,9 +400,6 @@ pub fn restore_scroll(adjustment: &gtk::Adjustment, value: f64) {
     gtk::glib::idle_add_local_once(move || adjustment.set_value(value));
 }
 
-/// How many unchanged lines a link reveals at a time.
-const REVEAL_STEP: u32 = 10;
-
 /// Called with the index of a hunk, as a `Gap` gives it, and which lines of
 /// the gap before it to reveal.
 pub type RevealGap = Rc<dyn Fn(usize, Reveal)>;
@@ -406,57 +413,92 @@ pub fn reveal_gap_of(handler: &RevealFileGap, file_index: usize) -> RevealGap {
     Rc::new(move |before_hunk, how| handler(file_index, before_hunk, how))
 }
 
-/// Inserts the line that stands for a gap of a file with `hunk_count` hunks:
-/// how many lines it has, and links that reveal them.
-pub fn insert_gap(
+/// The gaps of a file at an index, each with the buttons that reveal its lines.
+pub fn expandable_gaps(file: &FileDiff, file_index: usize) -> Vec<(Gap, Expander)> {
+    let hunk_count = file.hunks.len();
+    file.gaps()
+        .into_iter()
+        .map(|gap| {
+            let expander = Expander {
+                file_index,
+                before_hunk: gap.before_hunk,
+                buttons: gap.buttons(hunk_count),
+            };
+            (gap, expander)
+        })
+        .collect()
+}
+
+/// Inserts the head line of a hunk, which opens and closes it when clicked,
+/// and returns the name of the tag that its lines must carry. The gutter draws
+/// the buttons of the gap before the hunk beside it.
+pub fn insert_hunk_head(
+    folds: &Folds,
+    rows: &mut RowRecorder,
+    iter: &mut gtk::TextIter,
+    header: &str,
+    expander: Option<Expander>,
+    tags: &[&str],
+) -> String {
+    rows.set(iter, Row::HunkHeader(expander));
+    let mut head_tags = tags.to_vec();
+    head_tags.push(HUNK_HEADER);
+    if expander.is_some_and(|e| e.buttons == GapButtons::Both) {
+        head_tags.push(TWO_EXPANDERS);
+    }
+    folds.insert_head(iter, header, &head_tags, true)
+}
+
+/// Inserts the line that stands for the gap after the last hunk, whose
+/// buttons the gutter draws beside it.
+pub fn insert_trailing_gap(
+    rows: &mut RowRecorder,
+    iter: &mut gtk::TextIter,
+    expander: Expander,
+    tags: &[&str],
+) {
+    rows.set(iter, Row::Gap(expander));
+    let mut gap_tags = tags.to_vec();
+    gap_tags.push(GAP);
+    insert(&iter.buffer(), iter, "\n", &gap_tags);
+}
+
+/// Adds a link that reveals the whole of a gap to the end of the line just
+/// inserted before `iter`, unless the button of the gap already does.
+pub fn insert_show_all(
     links: &Links,
     iter: &mut gtk::TextIter,
     gap: &Gap,
-    hunk_count: usize,
+    expander: Expander,
     tags: &[&str],
     reveal: &RevealGap,
 ) {
-    let buffer = iter.buffer();
+    if expander.buttons == GapButtons::All {
+        return;
+    }
+    let label = match gap.count {
+        Some(count) => format!("Show all {} lines", count),
+        None => "Show all".to_string(),
+    };
     let mut gap_tags = tags.to_vec();
     gap_tags.push(GAP);
-    let label = match gap.count {
-        Some(1) => "⋯ 1 unchanged line".to_string(),
-        Some(count) => format!("⋯ {} unchanged lines", count),
-        None => "⋯ More lines".to_string(),
-    };
-    insert(&buffer, iter, &label, &gap_tags);
 
-    // The gap before the first hunk has no hunk above, and the gap after the
-    // last has none below
-    let is_first = gap.before_hunk == 0;
-    let is_last = gap.before_hunk == hunk_count;
-    let few = gap.count.is_some_and(|count| count <= REVEAL_STEP);
-    let mut add_link = |label: &str, tooltip: &str, how: Reveal| {
-        insert(&buffer, iter, "   ", &gap_tags);
-        let reveal = reveal.clone();
-        let before_hunk = gap.before_hunk;
-        links.insert(iter, label, &gap_tags, tooltip, move || {
-            reveal(before_hunk, how)
-        });
-    };
-    if !few {
-        if !is_first {
-            add_link(
-                &format!("▼ {}", REVEAL_STEP),
-                "Show more lines below the code above",
-                Reveal::Down(REVEAL_STEP),
-            );
-        }
-        if !is_last {
-            add_link(
-                &format!("▲ {}", REVEAL_STEP),
-                "Show more lines above the code below",
-                Reveal::Up(REVEAL_STEP),
-            );
-        }
+    // Before the line break, outside the head of a fold, so that the click
+    // does not also close the hunk
+    iter.backward_char();
+    if !iter.starts_line() {
+        insert(&iter.buffer(), iter, "    ", &gap_tags);
     }
-    add_link("Show all", "Show all the hidden lines here", Reveal::All);
-    insert(&buffer, iter, "\n", &gap_tags);
+    let reveal = reveal.clone();
+    let before_hunk = gap.before_hunk;
+    links.insert(
+        iter,
+        &label,
+        &gap_tags,
+        "Show all the hidden lines here",
+        move || reveal(before_hunk, Reveal::All),
+    );
+    iter.forward_char();
 }
 
 /// Hides the lines of a closed fold. An open one leaves their visibility unset

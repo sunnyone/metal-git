@@ -364,6 +364,22 @@ pub fn no_gap_follows_a_hunk_that_reaches_the_end_of_the_file() {
 }
 
 #[test]
+pub fn gap_buttons_follow_where_the_gap_is_and_how_long() {
+	let gap = |before_hunk, count| diff::Gap { before_hunk, old_start: 1, count };
+	let step = diff::REVEAL_STEP;
+
+	assert_eq!(diff::GapButtons::Up, gap(0, Some(step + 1)).buttons(2));
+	assert_eq!(diff::GapButtons::Both, gap(1, Some(step + 1)).buttons(2));
+	assert_eq!(diff::GapButtons::Down, gap(2, Some(step + 1)).buttons(2));
+	// The length of the gap after the last hunk is unknown until the old
+	// version is read
+	assert_eq!(diff::GapButtons::Down, gap(2, None).buttons(2));
+	for before_hunk in 0..=2 {
+		assert_eq!(diff::GapButtons::All, gap(before_hunk, Some(step)).buttons(2));
+	}
+}
+
+#[test]
 pub fn reveal_down_continues_the_hunk_above() {
 	let mut file = file_with_two_hunks();
 

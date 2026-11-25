@@ -11,7 +11,7 @@ mod model;
 mod syntax;
 
 pub use commit::{diff_trees, ListCommitDiffFileEntry, ListCommitDiffResult};
-pub use context::{Gap, Reveal};
+pub use context::{Gap, GapButtons, Reveal, REVEAL_STEP};
 pub use differ::{DiffTarget, Differ};
 pub use emphasis::{changed_ranges, emphasize_changes};
 pub use from_git::{file_from_patch, files_from_diff, status_of, DiffSettings};

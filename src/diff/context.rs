@@ -23,6 +23,23 @@ pub struct Gap {
     pub count: Option<u32>,
 }
 
+/// How many unchanged lines a button of a gap reveals at a time.
+pub const REVEAL_STEP: u32 = 20;
+
+/// The buttons that reveal the lines of a gap, as GitHub shows them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GapButtons {
+    /// One that reveals lines below the hunk above, over one that reveals
+    /// lines above the hunk below
+    Both,
+    /// Only lines below the hunk above, as for the gap after the last hunk
+    Down,
+    /// Only lines above the hunk below, as for the gap before the first hunk
+    Up,
+    /// One that reveals the whole gap, which is no longer than a step
+    All,
+}
+
 /// Which lines of a gap to reveal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reveal {
@@ -31,6 +48,23 @@ pub enum Reveal {
     /// Up to this many at the bottom of the gap, leading into the hunk below
     Up(u32),
     All,
+}
+
+impl Gap {
+    /// The buttons of the gap in a file with `hunk_count` hunks. The gap before
+    /// the first hunk has no hunk above, and the gap after the last has none
+    /// below.
+    pub fn buttons(&self, hunk_count: usize) -> GapButtons {
+        if self.count.is_some_and(|count| count <= REVEAL_STEP) {
+            GapButtons::All
+        } else if self.before_hunk == 0 {
+            GapButtons::Up
+        } else if self.before_hunk == hunk_count {
+            GapButtons::Down
+        } else {
+            GapButtons::Both
+        }
+    }
 }
 
 /// Lines from `start`, `count` of them, as git gives them: for none, `start`
